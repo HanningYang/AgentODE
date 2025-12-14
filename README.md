@@ -6,6 +6,8 @@
 - **Parameter distribution inference** - Estimation of population-level parameter distributions from summary statistics
 - **Expert-informed priors** - Incorporation of clinical knowledge through prompt specifications
 
+![LLM-ODE-viz](./images/llm-ode.png)
+
 ## Installation
 
 Create a conda environment and install dependencies:
@@ -55,7 +57,14 @@ python main.py \
   --log_path logs/aki_run1
 ```
 
-### 3. API-Based Runs
+### 3. Visualize Results
+
+Monitor training progress with TensorBoard:
+```bash
+tensorboard --logdir=logs/aki_run1
+```
+
+### 4. API-Based Runs
 
 Use OpenAI models instead of local LLMs:
 ```bash

@@ -20,6 +20,8 @@ from typing import Callable, Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
+from scipy.stats import spearmanr
+
 
 N_PATIENTS_DEFAULT = 100
 N_SIMULATIONS_DEFAULT = 100
@@ -109,7 +111,7 @@ def compute_summary_stats(
                 y_t1.extend(vals[:-1].tolist())
 
         if len(y_t) > 1:
-            autocorr = float(np.corrcoef(y_t, y_t1)[0, 1])
+            autocorr, _ = spearmanr(y_t, y_t1)
             if np.isnan(autocorr):
                 autocorr = 0.0
         else:
@@ -137,7 +139,7 @@ def compute_summary_stats(
                     diffs2.extend(dv2[:m].tolist())
 
             if len(diffs1) > 1:
-                corr = float(np.corrcoef(diffs1, diffs2)[0, 1])
+                corr, _ = spearmanr(diffs1, diffs2)
                 if np.isnan(corr):
                     corr = 0.0
             else:
@@ -202,7 +204,7 @@ def compute_summary_stats_from_df(
                 y_t1.extend(vals[:-1].tolist())
 
         if len(y_t) > 1:
-            autocorr = float(np.corrcoef(y_t, y_t1)[0, 1])
+            autocorr, _ = spearmanr(y_t, y_t1)
             if np.isnan(autocorr):
                 autocorr = 0.0
         else:
@@ -232,7 +234,7 @@ def compute_summary_stats_from_df(
                     diffs2.extend(dv2.tolist())
 
             if len(diffs1) > 1:
-                corr = float(np.corrcoef(diffs1, diffs2)[0, 1])
+                corr, _ = spearmanr(diffs1, diffs2)
                 if np.isnan(corr):
                     corr = 0.0
             else:
