@@ -1,0 +1,4 @@
+workflow:
+  rules:
+    - when: never
+
