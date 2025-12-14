@@ -1,0 +1,46 @@
+"""
+Find the symbolic skeleton of an ODE system that represents Acute Kidney Injury (AKI)
+progression in middle-aged patients (50–64 years old) during the first 168 hours 
+(7 days) after hospital admission. The system should incorporate biologically 
+plausible interactions among the following biomarkers:
+
+    - Creatinine (mg/dL): Indicator of renal filtration function
+    - BUN – Blood Urea Nitrogen (mg/dL): Accumulates when renal clearance fails
+    - Potassium (mmol/L): Reflects renal electrolyte regulation and impaired excretion
+"""
+
+import numpy as np
+
+#Initialize parameters
+MAX_NPARAMS = 30
+params = [1.0]*MAX_NPARAMS
+
+@system.evolve
+def system(biomarkers: np.ndarray, params: np.ndarray) -> np.ndarray:
+    """Symbolic skeleton for a 3-variable AKI ODE system.
+
+    Args:
+        biomarkers: A numpy array containing
+            [Creatinine, BUN, Potassium].
+        params: Array of numeric constants or parameters to be optimized.
+
+    Returns:
+        A numpy array representing the temporal derivatives (d/dt)
+        of the biomarkers.
+    """
+    d_biomarkers = np.zeros_like(biomarkers)
+    Creatinine, BUN, Potassium = biomarkers
+
+    # Impairment factor (never below 0)
+    impairment = max(0.0, 1.0 - params[6] * Creatinine)
+
+    # Creatinine: params[0] = production, params[1] = clearance
+    d_biomarkers[0] = params[0] - params[1] * Creatinine * impairment
+
+    # BUN: params[3] = production, params[4] = clearance
+    d_biomarkers[1] = params[2] - params[3] * BUN * impairment
+
+    # Potassium: params[6] = production, params[7] = clearance
+    d_biomarkers[2] = params[4] - params[5] * Potassium * impairment
+
+    return d_biomarkers

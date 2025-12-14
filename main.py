@@ -5,10 +5,10 @@ import numpy as np
 import torch
 import pandas as pd
 
-from llmsr import pipeline
-from llmsr import config
-from llmsr import sampler
-from llmsr import evaluator
+from llmode import pipeline
+from llmode import config
+from llmode import sampler
+from llmode import evaluator
 
 
 parser = ArgumentParser()
@@ -29,7 +29,7 @@ if __name__ == '__main__':
     class_config = config.ClassConfig(llm_class=sampler.LocalLLM, sandbox_class=evaluator.LocalSandbox)
     config = config.Config(use_api = args.use_api, 
                            api_model = args.api_model,)
-    global_max_sample_num = 10000 
+    global_max_sample_num = 10000
 
     # Load prompt specification
     with open(
@@ -57,6 +57,6 @@ if __name__ == '__main__':
         config=config,
         max_sample_nums=global_max_sample_num,
         class_config=class_config,
-        # log_dir = 'logs/m1jobs-mixtral-v10',
+        problem_name=problem_name,
         log_dir=args.log_path,
     )

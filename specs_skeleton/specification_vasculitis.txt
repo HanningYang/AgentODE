@@ -1,0 +1,52 @@
+"""
+Find the symbolic skeleton of an ODE system that represents the temporal dynamics of 
+biomarkers in ANCA-associated vasculitis (AAV). The system should capture the 
+biological interactions among the following biomarkers:
+    - Anti.MPO.level (U/mL): Autoantibody driver
+    - CRP (mg/L): Systemic inflammation
+    - Monocyte.count.x10.9.L (×10⁹/L): Immune activation
+    - Creatinine (μmol/L): Renal injury
+    - Hb (g/dL): Chronic inflammation / anemia
+
+The system models disease progression from day 0 (first hospital visit) to day 180.
+"""
+
+import numpy as np
+
+# Initialize parameters
+MAX_NPARAMS = 20
+PARAMS_INIT = [1.0] * MAX_NPARAMS
+
+@ode_system.evolve
+def ode_system(biomarkers: np.ndarray, params: np.ndarray) -> np.ndarray:
+    """Symbolic skeleton for AAV biomarker ODE system.
+    
+    Args:
+        biomarkers: A numpy array containing [Anti.MPO.level, CRP, Monocyte.count.x10.9.L, Creatinine, Hb].
+        params: Array of parameter placeholders for unknown coefficients to be optimized.
+        
+    Return:
+        A numpy array representing the temporal derivatives (d/dt) of each biomarker.
+    """
+    d_biomarkers = np.zeros_like(biomarkers)
+    
+    # Unpack biomarker values
+    AntiMPO, CRP, Monocyte, Creatinine, Hb = biomarkers
+    
+    # Define ODE system structure
+    # d(Anti.MPO)/dt: Autoantibody dynamics
+    d_biomarkers[0] = -params[0] * AntiMPO
+    
+    # d(CRP)/dt: Inflammatory response driven by autoantibody, with natural decay
+    d_biomarkers[1] = params[1] * AntiMPO - params[2] * CRP
+    
+    # d(Monocyte)/dt: Immune activation triggered by inflammation, with clearance
+    d_biomarkers[2] = params[3] * CRP - params[4] * Monocyte
+    
+    # d(Creatinine)/dt: Renal injury from immune activation, with recovery
+    d_biomarkers[3] = params[5] * Monocyte - params[6] * Creatinine
+    
+    # d(Hb)/dt: Anemia due to chronic inflammation
+    d_biomarkers[4] = -params[7] * CRP * Hb
+    
+    return d_biomarkers

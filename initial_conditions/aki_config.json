@@ -1,0 +1,69 @@
+{
+  "problem_name": "aki",
+  "description": "Acute Kidney Injury biomarker initial conditions",
+  "biomarkers": {
+    "creatinine": {
+      "display_name": "Creatinine",
+      "unit": "mg/dL",
+      "distribution": "lognormal",
+      "mean": 2.4,
+      "median": 1.50,
+      "std": 2.4,
+      "clip_min": 0.3,
+      "clip_max": 6.0,
+      "observed": true,
+      "physiological_range": {
+        "normal_min": 0.6,
+        "normal_max": 1.2,
+        "critical_max": 10.0
+      }
+    },
+    "bun": {
+      "display_name": "Blood Urea Nitrogen",
+      "unit": "mg/dL",
+      "distribution": "lognormal",
+      "mean": 37.0,
+      "median": 29.00,
+      "std": 27.0,
+      "clip_min": 2,
+      "clip_max": 110,
+      "observed": true,
+      "physiological_range": {
+        "normal_min": 7,
+        "normal_max": 20,
+        "critical_max": 100
+      }
+    },
+    "potassium": {
+      "display_name": "Potassium",
+      "unit": "mmol/L",
+      "distribution": "normal",
+      "mean": 4.3,
+      "median": 4.20,
+      "std": 0.76,
+      "clip_min": 3.0,
+      "clip_max": 6.0,
+      "observed": true,
+      "physiological_range": {
+        "normal_min": 3.5,
+        "normal_max": 5.0,
+        "critical_min": 2.5,
+        "critical_max": 6.5
+      }
+    }
+  },
+  "simulation_params": {
+    "default_sample_size":30,
+    "time_span": [0, 168],
+    "time_unit": "hours",
+    "time_points": 30,
+    "description": "7 days (168 hours) after hospital admission"
+  },
+  "correlation_matrix": [
+    [1.000, 0.694, 0.235],
+    [0.694, 1.000, 0.340],
+    [0.235, 0.340, 1.000]
+  ],
+  "random_seed": null,
+  "notes": "Statistics derived from AKI patient population (middle-aged adults, 50-64 years)"
+}
