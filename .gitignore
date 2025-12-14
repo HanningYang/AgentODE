@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+logs/
+
+# Data (optional but recommended)
+data/
+
