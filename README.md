@@ -57,6 +57,15 @@ python main.py \
   --log_path <LOG_PATH>
 ```
 
+Example:
+
+```bash
+python main.py \
+  --problem_name aki \
+  --spec_path specs_skeleton/specification_aki_numpy.txt \
+  --log_path logs/aki_run1
+```
+
 ### 3. Visualize Results
 
 Monitor training progress with TensorBoard:
