@@ -8,6 +8,3 @@ __pycache__/
 # Logs
 logs/
 
-# Data (optional but recommended)
-data/
-
