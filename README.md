@@ -34,8 +34,8 @@ To start two engines with different local models manually:
 **ODE skeleton discovery:**
 ```bash
 python ./llm_engine/engine.py \
-  --model_path "$MODEL_PATH" \
-  --gpu_ids [GPU_ID]  \
+  --model_path <MODEL_PATH> \
+  --gpu_ids <GPU_ID> \
   --port 5000 \
   --quantization
 ```
@@ -43,8 +43,8 @@ python ./llm_engine/engine.py \
 **Paremeter distribution inference:**
 ```bash
 python ./llm_engine/engine.py \
-  --model_path "$MODEL_PATH" \
-  --gpu_ids [GPU_ID]  \
+  --model_path <MODEL_PATH> \
+  --gpu_ids <GPU_ID> \
   --port 5001 \
   --quantization
 ```
@@ -52,19 +52,36 @@ python ./llm_engine/engine.py \
 
 ```bash
 python main.py \
-  --problem_name aki \
-  --spec_path specs_skeleton/specification_aki_numpy.txt \
-  --log_path logs/aki_run1
+  --problem_name <PROBLEM_NAME> \
+  --spec_path <SPEC_PATH> \
+  --log_path <LOG_PATH>
 ```
 
 ### 3. Visualize Results
 
 Monitor training progress with TensorBoard:
 ```bash
-tensorboard --logdir=logs/aki_run1
+tensorboard --logdir=<LOG_PATH>
 ```
 
-### 4. API-Based Runs
+### 4. Analyze Discovered Systems
+
+**Find the best equation:**
+```bash
+python analysis/find_best_equation.py --log_path <LOG_PATH>
+```
+Returns: Best score and sample order.
+
+**Evaluate and visualize a specific system:**
+```bash
+python analysis/evaluate_and_visualize_system.py \
+  --problem_name <PROBLEM_NAME> \
+  --sample_order <SAMPLE_ORDER> \
+  --log_path <LOG_PATH>
+```
+Returns: Summary statistics comparison (observed vs simulated), synthetic log-likelihood, and trajectory visualizations saved to the log directory.
+
+### 5. API-Based Runs
 
 Use OpenAI models instead of local LLMs:
 ```bash

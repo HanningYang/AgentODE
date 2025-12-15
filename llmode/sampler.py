@@ -266,7 +266,7 @@ class LocalLLM(LLM):
 
                     for i, raw_response in enumerate(raw_responses):
                         try:
-                            # print(f"\n============ PARAMETER INFERENCE (sample {i + 1}) ==============")
+                            print(f"\n============ PARAMETER INFERENCE (sample {i + 1}) ==============")
                             # Extract just the function from the raw response
                             function_code = param_utils.extract_function_from_response(raw_response, 'system')
                             # print(f"[Extracted Function]\n{function_code}\n")
@@ -291,9 +291,9 @@ class LocalLLM(LLM):
                             param_json_str = param_response if isinstance(param_response, str) else param_response[0]
                             param_distributions = param_utils.extract_json_from_llm_output(param_json_str)
 
-                            # print("\n[Extracted Parameter Distributions JSON]")
-                            # print(json.dumps(param_distributions, indent=2))
-                            # print("====================================================\n")
+                            print("\n[Extracted Parameter Distributions JSON]")
+                            print(json.dumps(param_distributions, indent=2))
+                            print("====================================================\n")
 
                             self._param_inference_results.append(param_distributions)
 
