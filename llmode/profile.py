@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os.path
-from typing import List, Dict
+from typing import List, Dict, Any
 import logging
 import json
 from llmode import code_manipulation
@@ -16,6 +16,7 @@ class Profiler:
             log_dir: str | None = None,
             pkl_dir: str | None = None,
             max_log_nums: int | None = None,
+            llm_metadata: Dict[str, Any] | None = None,
     ):
         """
         Args:
@@ -47,6 +48,19 @@ class Profiler:
         self._each_sample_tot_sample_time = []
         self._each_sample_tot_evaluate_time = []
 
+        # Optionally write a one-time LLM configuration metadata file alongside
+        # the run logs so that model/backend and hyperparameters are recorded
+        # independently of per-sample JSON files.
+        if log_dir and llm_metadata:
+            meta_path = os.path.join(log_dir, 'llm_metadata.json')
+            try:
+                with open(meta_path, 'w') as f:
+                    json.dump(llm_metadata, f, indent=2)
+            except Exception:
+                # Fail silently if we cannot write metadata; this should not
+                # interrupt the main experiment loop.
+                logging.exception('Failed to write LLM metadata log.')
+
     def _write_tensorboard(self):
         if not self._log_dir:
             return
@@ -70,25 +84,14 @@ class Profiler:
             global_step=self._num_samples
         )
         
-        # Update (12.07): Introduced Codex adjustments to enable preliminary testing of LLM inputs/outputs.
-        # Note: The evaluation routine was intentionally bypassed for this test cycle.
-        # Action required: Revert changes following completion of test run.
-
-        
-        # Log the function_str
+        # Log the best function string; fall back to a placeholder if we
+        # have not yet recorded any valid best program.
+        best_program_str = self._cur_best_program_str or 'No valid program logged yet.'
         self._writer.add_text(
             'Best Function String',
-            self._cur_best_program_str,
+            best_program_str,
             global_step=self._num_samples
         )
-        
-        # Log the function_str; fall back to a placeholder if none logged yet
-        # best_program_str = self._cur_best_program_str or 'No valid program logged yet.'
-        # self._writer.add_text(
-        #     'Best Function String',
-        #     best_program_str,
-        #     global_step=self._num_samples
-        # )
 
     def _write_json(self, programs: code_manipulation.Function):
         sample_order = programs.global_sample_nums
@@ -123,6 +126,8 @@ class Profiler:
         sample_time = function.sample_time
         evaluate_time = function.evaluate_time
         score = function.score
+        llm_source = getattr(function, 'llm_source', None)
+        llm_model_name = getattr(function, 'llm_model_name', None)
         # log attributes of the function
         from llmode import param_utils
         num_params = param_utils.count_params_used(function.body)
@@ -134,6 +139,10 @@ class Profiler:
         print(f'Sample time  : {str(sample_time)}')
         print(f'Evaluate time: {str(evaluate_time)}')
         print(f'Sample orders: {str(sample_orders)}')
+        if llm_source is not None or llm_model_name is not None:
+            print(f'LLM backend  : {llm_source or "unknown"}')
+            if llm_model_name is not None:
+                print(f'LLM model    : {llm_model_name}')
         print(f'======================================================\n\n')
 
         # update best function in curve

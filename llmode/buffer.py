@@ -121,7 +121,8 @@ class ExperienceBuffer:
     def get_prompt(self) -> Prompt:
         """Returns a prompt containing samples from one chosen island."""
         island_id = np.random.randint(len(self._islands))
-        code, version_generated = self._islands[island_id].get_prompt()
+        code, version_generated = self._islands[island_id].get_prompt(island_id=island_id)
+        # code, version_generated = self._islands[island_id].get_prompt()
         return Prompt(code, version_generated, island_id)
 
 
@@ -134,7 +135,12 @@ class ExperienceBuffer:
     ) -> None:
         """Registers `program` in the specified island."""
         self._islands[island_id].register_program(program, scores_per_test)
-        score = _reduce_score(scores_per_test)
+        
+        # logging, and archive bookkeeping.
+        # score = round(float(_reduce_score(scores_per_test)), 3) # 3 decimals for clustering,
+
+        score = int(round(float(_reduce_score(scores_per_test))))
+
         if score > self._best_score_per_island[island_id]:
             self._best_program_per_island[island_id] = program
             self._best_scores_per_test_per_island[island_id] = scores_per_test
@@ -149,10 +155,16 @@ class ExperienceBuffer:
             global_sample_nums = kwargs.get('global_sample_nums', None)
             sample_time = kwargs.get('sample_time', None)
             evaluate_time = kwargs.get('evaluate_time', None)
+            llm_source = kwargs.get('llm_source', None)
+            llm_model_name = kwargs.get('llm_model_name', None)
             program.score = score
             program.global_sample_nums = global_sample_nums
             program.sample_time = sample_time
             program.evaluate_time = evaluate_time
+            if llm_source is not None:
+                program.llm_source = llm_source
+            if llm_model_name is not None:
+                program.llm_model_name = llm_model_name
             profiler.register_function(program)
 
 
@@ -210,6 +222,38 @@ class ExperienceBuffer:
             self._register_program_in_island(founder, island_id, founder_scores)
 
 
+    def print_island_info(self) -> None:
+        """Print detailed information about all islands and their clusters."""
+        print("\n" + "="*80)
+        print("EXPERIENCE BUFFER - ISLAND & CLUSTER INFORMATION")
+        print("="*80)
+
+        for island_id, island in enumerate(self._islands):
+            print(f"\n{'─'*80}")
+            print(f"ISLAND {island_id}")
+            print(f"{'─'*80}")
+            print(f"  Best Score: {self._best_score_per_island[island_id]:.6f}")
+            print(f"  Total Programs: {island._num_programs}")
+            print(f"  Number of Clusters: {len(island._clusters)}")
+
+            if len(island._clusters) > 0:
+                print(f"\n  Clusters:")
+                for cluster_idx, (signature, cluster) in enumerate(island._clusters.items()):
+                    print(f"\n    Cluster {cluster_idx + 1}:")
+                    print(f"      Signature: {signature}")
+                    print(f"      Score: {cluster.score:.6f}")
+                    print(f"      Programs in cluster: {len(cluster._programs)}")
+                    print(f"      Program lengths: {cluster._lengths}")
+                    # Replace None with 0 for readability and consistency with Profiler.
+                    sample_nums = [
+                        s if s is not None else 0 for s in cluster._sample_nums
+                    ]
+                    print(f"      Sample numbers: {sample_nums}")
+            else:
+                print(f"  (No clusters yet)")
+
+        print("\n" + "="*80 + "\n")
+
 class Island:
     """A sub-population of the program skeleton experience buffer."""
 
@@ -247,35 +291,130 @@ class Island:
         self._num_programs += 1
 
 
-    def get_prompt(self) -> tuple[str, int]:
+    # def get_prompt(self) -> tuple[str, int]:
+    def get_prompt(self, island_id: int | None = None) -> tuple[str, int]:
+
         """Constructs a prompt containing system program skeletons from this island."""
         signatures = list(self._clusters.keys())
 
-        if not signatures:
+        # if not signatures:
             # No successful programs yet; return the seed program from template
-            logging.warning('Island has no clusters yet; using seed program from template')
+            # logging.warning('Island has no clusters yet; using seed program from template')
             # seed_func = self._template.get_function(self._function_to_evolve)
             # return (str(seed_func), 1)
 
         cluster_scores = np.array(
             [self._clusters[signature].score for signature in signatures])
-        
+
+        # Z-score normalize cluster scores before temperature scaling and softmax.
+        mean = np.mean(cluster_scores)
+        std = np.std(cluster_scores)
+        if std > 0:
+            normalized_scores = (cluster_scores - mean) / std
+        else:
+            # If all scores are identical, fall back to zeros (uniform logits).
+            normalized_scores = np.zeros_like(cluster_scores)
+
+        # Cap standardized scores between -5 and 5
+        normalized_scores = np.clip(normalized_scores, -5.0, 5.0)
+
         period = self._cluster_sampling_temperature_period
         temperature = self._cluster_sampling_temperature_init * (
                 1 - (self._num_programs % period) / period)
-        probabilities = _softmax(cluster_scores, temperature)
+        # Ensure temperature does not decay below a minimum threshold.
+        temperature = max(temperature, 0.05)
+
+        probabilities = _softmax(normalized_scores, temperature)
+
+        # Print cluster probabilities
+        print(f"\n  Cluster sampling probabilities (temperature={temperature:.4f}):")
+        for i, (sig, prob, score) in enumerate(zip(signatures, probabilities, cluster_scores), 1):
+            print(f"    Cluster {i}: prob={prob:.4f}, score={score:.6f}, signature={sig}")
 
         functions_per_prompt = min(len(self._clusters), self._functions_per_prompt)
+
+        '''
+        # Sample distinct clusters for the prompt. Prefer sampling without
+        # replacement from clusters with non-zero probability mass; if there
+        # are not enough such clusters (due to numerical underflow), fall back
+        # to sampling with replacement using the original probabilities.
+        non_zero_indices = np.nonzero(probabilities)[0]
+        if len(non_zero_indices) >= functions_per_prompt:
+            nz_probs = probabilities[non_zero_indices]
+            nz_probs = nz_probs / nz_probs.sum()
+            chosen_nz = np.random.choice(
+                len(non_zero_indices),
+                size=functions_per_prompt,
+                replace=False,
+                p=nz_probs,
+            )
+            idx = non_zero_indices[chosen_nz]
+        else:
+            idx = np.random.choice(
+                len(signatures),
+                size=functions_per_prompt,
+                replace=True,
+                p=probabilities,
+            )
+        '''
 
         idx = np.random.choice(
             len(signatures), size=functions_per_prompt, p=probabilities)
         chosen_signatures = [signatures[i] for i in idx]
+
+        # Map signatures to 1-based cluster indices for logging.
+        signature_to_cluster_idx = {sig: i + 1 for i, sig in enumerate(signatures)}
+
+        # Print selected clusters information
+        if island_id is not None:
+            print(f"\n  → Selected {functions_per_prompt} cluster(s) for prompt on Island {island_id}:")
+        else:
+            print(f"\n  → Selected {functions_per_prompt} cluster(s) for prompt:")
+
+        implementations: list[code_manipulation.Function] = []
+
+        scores: list[float] = []
+        for signature in chosen_signatures:
+            cluster = self._clusters[signature]
+            sampled_program = cluster.sample_program()
+            implementations.append(sampled_program)
+            scores.append(cluster.score)
+
+            # Print which cluster and program was selected
+            sample_num = getattr(sampled_program, 'global_sample_nums', None)
+            # Use 0 for initial template programs (no global_sample_nums),
+            # to match the convention in `profile.py`.
+            printable_sample = sample_num if sample_num is not None else 0
+            cluster_idx = signature_to_cluster_idx.get(signature, -1)
+            if island_id is not None:
+                print(
+                    f"     Island {island_id}, Cluster {cluster_idx}: "
+                    f"signature={signature}, score={cluster.score:.6f}, "
+                    f"sampled program from sample #{printable_sample}"
+                )
+            else:
+                print(
+                    f"     Cluster {cluster_idx}: signature={signature}, "
+                    f"score={cluster.score:.6f}, sampled program from sample #{printable_sample}"
+                )
+
+        '''
+        # Print selected clusters information
+        print(f"\n  → Selected {functions_per_prompt} cluster(s) for prompt:")
+
+        
         implementations = []
         scores = []
         for signature in chosen_signatures:
             cluster = self._clusters[signature]
-            implementations.append(cluster.sample_program())
+            sampled_program = cluster.sample_program()
+            implementations.append(sampled_program)
             scores.append(cluster.score)
+
+            # Print which cluster and program was selected
+            sample_num = getattr(sampled_program, 'global_sample_nums', 'N/A')
+            print(f"     Cluster: signature={signature}, score={cluster.score:.6f}, sampled program from sample #{sample_num}")
+        '''
 
         indices = np.argsort(scores)
         sorted_implementations = [implementations[i] for i in indices]
@@ -340,6 +479,10 @@ class Cluster:
         self._score = score
         self._programs: list[code_manipulation.Function] = [implementation]
         self._lengths: list[int] = [len(str(implementation))]
+        # Track the global sample numbers of all programs in this cluster.
+        self._sample_nums: list[int | None] = [
+            getattr(implementation, 'global_sample_nums', None)
+        ]
 
     @property
     def score(self) -> float:
@@ -349,6 +492,7 @@ class Cluster:
         """Adds `program` to the cluster."""
         self._programs.append(program)
         self._lengths.append(len(str(program)))
+        self._sample_nums.append(getattr(program, 'global_sample_nums', None))
 
     def sample_program(self) -> code_manipulation.Function:
         """Samples a program, giving higher probability to shorther programs."""

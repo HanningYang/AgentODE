@@ -9,7 +9,6 @@ Instructions:
 3. Provide moderately informative physiological priors (linear-space summaries)
 For each parameter:
 Provide a mean and standard deviation in physiological units (not distributions; these will later be lognormal).
-SD should reflect uncertainty (~30–60% of mean unless constrained).
 
 4. Internally check that the proposed priors would yield physiologically plausible 7-day trajectories
 
@@ -17,6 +16,11 @@ SD should reflect uncertainty (~30–60% of mean unless constrained).
 (1) a brief explanation of reasoning
 (2) a JSON object where the keys are parameter indices.
 Each parameter entry must include: "mean", "sd", and "rationale" (1 sentence).
+
+Additional constraints:
+• Critically, all parameters must be calibrated for an hourly timescale (t in hours)
+• For any parameter involved in feedback, coupling, or multiplicative modulation, choose values such that its effect remains order-one and does not amplify or suppress terms by more than a few-fold over plausible state ranges.
+• For any parameter multiplying a state variable, ensure the implied time scale (≈ 1 / parameter) is compatible with the modeled time horizon and not extreme.
 
 ODE System 
 Biomarkers:

@@ -75,12 +75,14 @@ def compute_summary_stats(
     Stats per biomarker:
       - 2: Quantile polynomial deg0, deg1 on standardized values
       - 1: Lag-1 autocorrelation (across time)
+      - 1: Population-level trend (Spearman correlation between time and
+           population mean trajectory)
 
     Cross-biomarker stats:
       - For each pair (b1, b2) with b2 > b1: correlation of first differences.
 
     Total stats:
-      3 * n_biomarkers + n_biomarkers * (n_biomarkers - 1) / 2.
+      4 * n_biomarkers + n_biomarkers * (n_biomarkers - 1) / 2.
     """
     n_patients, n_times, n_bio = trajectories.shape
     assert n_bio == len(biomarker_names)
@@ -118,7 +120,33 @@ def compute_summary_stats(
             autocorr = 0.0
         stats.append(autocorr)
 
-    # 3. Dynamic: difference correlations between biomarker pairs.
+    # 3. Population-level trend: Spearman correlation between time and
+    #    population mean trajectory for each biomarker (n_bio).
+    for b, _bio_name in enumerate(biomarker_names):
+        mean_traj: List[float] = []
+        for t_idx in range(n_times):
+            vals = trajectories[:, t_idx, b]
+            vals = vals[~np.isnan(vals)]
+            if vals.size > 0:
+                mean_traj.append(float(np.mean(vals)))
+            else:
+                mean_traj.append(np.nan)
+
+        mean_traj_arr = np.asarray(mean_traj, dtype=float)
+        time_vec = np.asarray(t_eval, dtype=float)
+        mask = ~np.isnan(mean_traj_arr)
+        mean_traj_masked = mean_traj_arr[mask]
+        time_vec_masked = time_vec[mask]
+
+        if mean_traj_masked.size > 1:
+            trend, _ = spearmanr(time_vec_masked, mean_traj_masked)
+            if np.isnan(trend):
+                trend = 0.0
+        else:
+            trend = 0.0
+        stats.append(float(trend))
+
+    # 4. Dynamic: difference correlations between biomarker pairs.
     for b1 in range(n_bio):
         for b2 in range(b1 + 1, n_bio):
             diffs1: List[float] = []
@@ -213,9 +241,33 @@ def compute_summary_stats_from_df(
             print(f"  {col}: {autocorr:.6f} (from {len(y_t)} lag pairs)")
         stats.append(autocorr)
 
-    # 3. Dynamic: difference correlations between biomarker pairs.
+    # 3. Population-level trend: Spearman correlation between time and
+    #    population mean trajectory for each biomarker.
     if verbose:
-        print("\n[3] Difference Correlations (between biomarker pairs):")
+        print("\n[3] Population-level trend (Spearman time vs mean biomarker):")
+    for col in biomarker_cols:
+        sub = df[[time_col, col]].dropna(subset=[col])
+        if sub.empty:
+            trend = 0.0
+            n_timepoints = 0
+        else:
+            grouped_time = sub.groupby(time_col)[col].mean()
+            time_vec = grouped_time.index.to_numpy(dtype=float)
+            mean_traj = grouped_time.to_numpy(dtype=float)
+            n_timepoints = mean_traj.size
+            if n_timepoints > 1:
+                trend, _ = spearmanr(time_vec, mean_traj)
+                if np.isnan(trend):
+                    trend = 0.0
+            else:
+                trend = 0.0
+        if verbose:
+            print(f"  {col}: {trend:.6f} (from {n_timepoints} time points)")
+        stats.append(float(trend))
+
+    # 4. Dynamic: difference correlations between biomarker pairs.
+    if verbose:
+        print("\n[4] Difference Correlations (between biomarker pairs):")
     for i, col1 in enumerate(biomarker_cols):
         for j, col2 in enumerate(biomarker_cols):
             if j <= i:
@@ -271,6 +323,10 @@ def get_stat_names(biomarker_cols: List[str]) -> List[str]:
     # Lag-1 autocorrelation.
     for col in biomarker_cols:
         names.append(f"{col}_lag1_autocorr")
+
+    # Population-level trend.
+    for col in biomarker_cols:
+        names.append(f"{col}_pop_trend_spearman")
 
     # Difference correlations.
     for i, col1 in enumerate(biomarker_cols):
@@ -403,10 +459,20 @@ class LogSyntheticLikelihood:
         return log_likelihood, details
 
 
+class _PhysioRejection(Exception):
+    """Internal signal that a simulation failed physiological validity."""
+
+    def __init__(self, valid_fraction: float):
+        super().__init__(f"valid_fraction={valid_fraction:.3f}")
+        self.valid_fraction = float(valid_fraction)
+
+
 def evaluate_system_logsl(
     system_func: Callable[[np.ndarray, np.ndarray], np.ndarray],
     problem_name: str,
     param_distributions: Dict[str, Dict[str, float]] | None,
+    verbose: bool = False,
+    sample_order: int | None = None,
 ) -> float | None:
     """Evaluate a system function via log synthetic likelihood for a given problem.
 
@@ -464,13 +530,32 @@ def evaluate_system_logsl(
             random_seed=config.get('random_seed', None),
         )
         param_sets = sampler_fn(n_patients)
-        return ode_simulator.simulate_ode_system(
+        trajectories = ode_simulator.simulate_ode_system(
             system_func=system_func,
             initial_conditions=ic_array,
             time_grid=t_grid,
             params=param_sets,
             method='odeint',
         )
+        # Drop patients whose trajectories are numerically or physiologically invalid.
+        valid_mask, _issues = ode_simulator.check_trajectory_normal_range_validity(
+            trajectories,
+            config=config,
+            check_nans=True,
+        )
+        valid_fraction = float(valid_mask.sum()) / float(valid_mask.size)
+        if valid_fraction < 0.8:
+            # For the very first template/system (sample_order == 0), allow a
+            # more permissive evaluation so that we always obtain an initial
+            # baseline score, even if many trajectories are invalid.
+            # For all later samples, enforce the 0.8 threshold strictly.
+            if sample_order not in (0, None):
+                # Signal to the outer evaluator that this system should be rejected.
+                raise _PhysioRejection(valid_fraction)
+        if not np.any(valid_mask):
+            # Should be caught by the 0.8 threshold above, but keep a fallback.
+            return trajectories[valid_mask]
+        return trajectories[valid_mask]
 
     log_sl = LogSyntheticLikelihood(
         s_obs=s_obs,
@@ -483,7 +568,29 @@ def evaluate_system_logsl(
         regularization=REGULARIZATION_DEFAULT,
     )
 
-    log_likelihood, _details = log_sl.evaluate(param_sampler, t_eval, verbose=False)
+    try:
+        log_likelihood, details = log_sl.evaluate(param_sampler, t_eval, verbose=False)
+    except _PhysioRejection as e:
+        # System-level rejection: at least one SL simulation had < 80% valid patients.
+        prefix = f"Sample {sample_order}: " if sample_order is not None else ""
+        print(
+            f"{prefix}System rejected: only {e.valid_fraction:.3f} of trajectories "
+            "fall within physiological normal ranges."
+        )
+        return None
     if not np.isfinite(log_likelihood):
         return None
+
+    if verbose:
+        # Optional diagnostics: print variance of each summary statistic under
+        # the synthetic model so users can inspect which dimensions are highly
+        # variable (and therefore down-weighted in the likelihood).
+        sigma_hat = details.get('sigma_hat')
+        if sigma_hat is not None and sigma_hat.size > 0:
+            variances = np.diag(sigma_hat)
+            print("\nVariance of summary statistics under model:")
+            for name, var in zip(stat_names, variances):
+                print(f"  {name:<40} {var:12.6g}")
+            print()
+
     return float(log_likelihood)

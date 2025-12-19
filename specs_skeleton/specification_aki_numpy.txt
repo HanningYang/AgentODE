@@ -30,17 +30,18 @@ def system(biomarkers: np.ndarray, params: np.ndarray) -> np.ndarray:
     """
     d_biomarkers = np.zeros_like(biomarkers)
     Creatinine, BUN, Potassium = biomarkers
-
-    # Impairment factor (never below 0)
-    impairment = max(0.0, 1.0 - params[6] * Creatinine)
-
-    # Creatinine: params[0] = production, params[1] = clearance
+    
+    # Impairment factor based on current biomarker levels (nonlinear feedback)
+    impairment = 1.0 + params[6] * (Creatinine - params[7]) + params[8] * (BUN - params[9]) + params[10] * (Potassium - params[11])
+    impairment = max(0.0, impairment)  # Ensure non-negative impairment
+    
+    # Creatinine: production constant minus clearance scaled by impairment
     d_biomarkers[0] = params[0] - params[1] * Creatinine * impairment
-
-    # BUN: params[3] = production, params[4] = clearance
+    
+    # BUN: production from protein metabolism minus clearance scaled by impairment
     d_biomarkers[1] = params[2] - params[3] * BUN * impairment
-
-    # Potassium: params[6] = production, params[7] = clearance
+    
+    # Potassium: constant influx minus excretion scaled by impairment
     d_biomarkers[2] = params[4] - params[5] * Potassium * impairment
-
+    
     return d_biomarkers

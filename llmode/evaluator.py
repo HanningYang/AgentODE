@@ -325,6 +325,16 @@ class Evaluator:
         new_function, program = _sample_to_program(
             sample, version_generated, self._template, self._function_to_evolve)
 
+        # Attach basic metadata from kwargs as early as possible so that
+        # downstream components (e.g., ExperienceBuffer / Cluster) can see
+        # correct sample orders even before registration.
+        global_sample_nums = kwargs.get('global_sample_nums', None)
+        sample_time = kwargs.get('sample_time', None)
+        if global_sample_nums is not None:
+            new_function.global_sample_nums = global_sample_nums
+        if sample_time is not None:
+            new_function.sample_time = sample_time
+
         # Optionally inject LLM-inferred (or explicitly provided) parameter
         # distributions into the program so that legacy specification-based
         # `evaluate` functions can access them as a global `param_distributions`
@@ -362,7 +372,11 @@ class Evaluator:
                     if not isinstance(test_output, (int, float)):
                         print(f'Error: test_output is {test_output}')
                         raise ValueError('@function.run did not return an int/float score.')
-                    scores_per_test[current_input] = test_output
+                    # Round legacy evaluation scores to 3 decimal places.
+                    # scores_per_test[current_input] = round(float(test_output), 3)
+                    scores_per_test[current_input] = int(round(float(test_output)))
+
+                    
         else:
             # Centralized evaluation path: use log synthetic likelihood.
             from llmode import synthetic_likelihood
@@ -379,13 +393,19 @@ class Evaluator:
             exec(program, all_globals_namespace)
             system_func = all_globals_namespace[self._function_to_evolve]
 
+            sample_order = getattr(new_function, 'global_sample_nums', None)
+
             log_sl_score = synthetic_likelihood.evaluate_system_logsl(
                 system_func=system_func,
                 problem_name=problem_name,
                 param_distributions=param_distributions,
+                sample_order=sample_order,
             )
             if log_sl_score is not None and np.isfinite(log_sl_score):
-                scores_per_test['log_sl'] = float(log_sl_score)
+                # Centralized evaluation produces a single scalar score
+                # (log synthetic likelihood) for the whole system; round to 3 decimals.
+                # scores_per_test['log_sl'] = round(float(log_sl_score), 3)
+                scores_per_test['log_sl'] = int(round(float(log_sl_score)))
 
         evaluate_time = time.time() - time_reset
 
@@ -407,8 +427,14 @@ class Evaluator:
             if profiler:
                 global_sample_nums = kwargs.get('global_sample_nums', None)
                 sample_time = kwargs.get('sample_time', None)
+                llm_source = kwargs.get('llm_source', None)
+                llm_model_name = kwargs.get('llm_model_name', None)
                 new_function.global_sample_nums = global_sample_nums
                 new_function.score = None
                 new_function.sample_time = sample_time
                 new_function.evaluate_time = evaluate_time
+                if llm_source is not None:
+                    new_function.llm_source = llm_source
+                if llm_model_name is not None:
+                    new_function.llm_model_name = llm_model_name
                 profiler.register_function(new_function)

@@ -1,10 +1,42 @@
 """Utilities for simulating ODE systems with generated initial conditions."""
 
+import os
+
 import numpy as np
 from scipy.integrate import odeint
 from typing import Callable, Dict, Optional, Tuple
 from llmode import initial_condition_utils
 from llmode import code_manipulation
+
+
+_NUMERICAL_WARNING_PRINTED = False
+
+
+def _silence_odeint_output():
+    """Context manager to silence low-level LSODA prints.
+
+    LSODA (Fortran code behind `odeint`) writes directly to C-level stdout/stderr,
+    which is not affected by ``contextlib.redirect_stdout/stderr``. This context
+    temporarily redirects file descriptors 1 and 2 to ``os.devnull`` so that
+    LSODA warnings are not printed.
+    """
+    class _Silencer:
+        def __enter__(self):
+            self._devnull_fd = os.open(os.devnull, os.O_WRONLY)
+            self._stdout_fd = os.dup(1)
+            self._stderr_fd = os.dup(2)
+            os.dup2(self._devnull_fd, 1)
+            os.dup2(self._devnull_fd, 2)
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            os.dup2(self._stdout_fd, 1)
+            os.dup2(self._stderr_fd, 2)
+            os.close(self._stdout_fd)
+            os.close(self._stderr_fd)
+            os.close(self._devnull_fd)
+
+    return _Silencer()
 
 
 def simulate_ode_system(
@@ -63,14 +95,28 @@ def simulate_ode_system(
         )
 
     if method == 'odeint':
+        global _NUMERICAL_WARNING_PRINTED
         for i in range(n_samples):
             # Wrapper to match odeint's expected signature: f(y, t)
             def ode_func(y, t, local_params=params_per_sample[i]):
                 return system_func(y, local_params)
 
             try:
-                trajectory = odeint(ode_func, initial_conditions[i], time_grid)
+                # Completely silence LSODA's internal warning prints for this call.
+                with _silence_odeint_output():
+                    trajectory = odeint(ode_func, initial_conditions[i], time_grid)
                 trajectories[i] = trajectory
+
+                # If trajectories look numerically extreme or invalid, emit
+                # a single high-level warning so the user is aware, without
+                # flooding the console with LSODA's internal messages.
+                if not _NUMERICAL_WARNING_PRINTED:
+                    if np.any(np.isnan(trajectory)) or np.nanmax(np.abs(trajectory)) > 1e3:
+                        print(
+                            "Warning: ODE integration produced extreme or invalid "
+                            "values; results may be numerically unreliable."
+                        )
+                        _NUMERICAL_WARNING_PRINTED = True
             except Exception as e:
                 # print(f"Warning: Integration failed for sample {i}: {e}")
                 trajectories[i] = np.nan
@@ -420,6 +466,63 @@ def check_trajectory_validity(
                     valid_mask[i] = False
                     issue_counts['exceeds_bounds'] += 1
                     break
+
+    return valid_mask, issue_counts
+
+
+def check_trajectory_normal_range_validity(
+    trajectories: np.ndarray,
+    config: dict,
+    check_nans: bool = True,
+) -> Tuple[np.ndarray, Dict[str, int]]:
+    """Check validity using physiological normal ranges for each biomarker.
+
+    A trajectory is considered invalid if:
+      - It contains any NaN values, or
+      - It contains any negative values, or
+      - Any biomarker leaves its physiological normal range
+        [normal_min, normal_max] (if defined).
+    """
+    n_samples = trajectories.shape[0]
+    valid_mask = np.ones(n_samples, dtype=bool)
+    issue_counts = {
+        'has_nan': 0,
+        'negative_values': 0,
+        'outside_normal_range': 0,
+    }
+
+    biomarker_names = initial_condition_utils.get_biomarker_order(config)
+
+    for i in range(n_samples):
+        trajectory = trajectories[i]
+
+        # Check for NaNs
+        if check_nans and np.any(np.isnan(trajectory)):
+            valid_mask[i] = False
+            issue_counts['has_nan'] += 1
+            continue
+
+        # Check for negative values (biomarkers should be non-negative)
+        if np.any(trajectory < 0):
+            valid_mask[i] = False
+            issue_counts['negative_values'] += 1
+            continue
+
+        # Check physiological normal ranges when available.
+        for j, name in enumerate(biomarker_names):
+            phys_range = config['biomarkers'][name].get('physiological_range')
+            if not phys_range:
+                continue
+            normal_min = phys_range.get('normal_min')
+            normal_max = phys_range.get('normal_max')
+            if normal_min is None or normal_max is None:
+                continue
+
+            vals = trajectory[:, j]
+            if np.any(vals < normal_min) or np.any(vals > normal_max):
+                valid_mask[i] = False
+                issue_counts['outside_normal_range'] += 1
+                break
 
     return valid_mask, issue_counts
 

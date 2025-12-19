@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-"""Configuration of a LLMSR experiments
+"""Configuration of a LLMODE experiments
 ."""
 from __future__ import annotations
 
@@ -39,13 +39,13 @@ class ExperienceBufferConfig:
     functions_per_prompt: int = 2 
     num_islands: int = 10 
     reset_period: int = 4 * 60 * 60
-    cluster_sampling_temperature_init: float = 0.1
+    cluster_sampling_temperature_init: float = 0.8 # 0.1
     cluster_sampling_temperature_period: int = 30_000
 
 
 @dataclasses.dataclass(frozen=True)
 class Config:
-    """Configuration for LLMSR experiments.
+    """Configuration for LLMODE experiments.
    
    Args:
        experience_buffer: Evolution multi-population settings

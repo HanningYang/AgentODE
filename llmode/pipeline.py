@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-""" Implementation of the LLMSR pipeline. """
+""" Implementation of the LLMODE pipeline. """
 from __future__ import annotations
 
 # from collections.abc import Sequence
@@ -66,7 +66,7 @@ def main(
         problem_name: str,
         **kwargs
 ):
-    """ Launch a LLMSR experiment.
+    """ Launch a LLMODE experiment.
     Args:
         specification: the boilerplate code for the problem.
         inputs       : the data instances for the problem.
@@ -87,7 +87,17 @@ def main(
     if log_dir is None:
         profiler = None
     else:
-        profiler = profile.Profiler(log_dir)
+        # Record which LLM/backend and hyperparameters are used for this run
+        # in a single metadata file alongside the logs.
+        llm_metadata = None
+        get_run_metadata = getattr(class_config.llm_class, 'get_run_metadata', None)
+        if callable(get_run_metadata):
+            try:
+                llm_metadata = get_run_metadata(config)
+            except Exception:
+                llm_metadata = None
+
+        profiler = profile.Profiler(log_dir, llm_metadata=llm_metadata)
 
     evaluators = []
     for _ in range(config.num_evaluators):

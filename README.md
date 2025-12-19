@@ -57,6 +57,14 @@ python main.py \
   --log_path <LOG_PATH>
 ```
 
+> Note on debug logging  
+> For inspection and debugging, the code currently prints:  
+> – the prompt sent to the LLM for ODE skeleton discovery  
+> – the LLM-generated ODE skeleton hypotheses  
+> – the extracted parameter distributions  
+> – information about evaluated functions and island states  
+> These are only for analysis; you can safely comment them out if you want a cleaner run or to speed up experiments.
+
 Example:
 
 ```bash

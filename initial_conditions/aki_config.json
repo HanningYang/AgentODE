@@ -13,9 +13,9 @@
       "clip_max": 6.0,
       "observed": true,
       "physiological_range": {
-        "normal_min": 0.6,
-        "normal_max": 1.2,
-        "critical_max": 10.0
+        "normal_min": 0.1,
+        "normal_max": 20.0,
+        "critical_max": 73.8
       }
     },
     "bun": {
@@ -29,9 +29,9 @@
       "clip_max": 110,
       "observed": true,
       "physiological_range": {
-        "normal_min": 7,
-        "normal_max": 20,
-        "critical_max": 100
+        "normal_min": 1,
+        "normal_max": 200,
+        "critical_max": 300
       }
     },
     "potassium": {
@@ -45,10 +45,10 @@
       "clip_max": 6.0,
       "observed": true,
       "physiological_range": {
-        "normal_min": 3.5,
-        "normal_max": 5.0,
-        "critical_min": 2.5,
-        "critical_max": 6.5
+        "normal_min": 2.0,
+        "normal_max": 9.0,
+        "critical_min": 1.0,
+        "critical_max": 14.0
       }
     }
   },

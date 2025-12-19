@@ -38,17 +38,26 @@ if __name__ == '__main__':
     ) as f:
         specification = f.read()
     
-    # Load dataset
+    # Load dataset (if available).
+    # For centralized evaluation problems (e.g. synthetic likelihood with AKI),
+    # the evaluator does not use these inputs; in that case we safely fall back
+    # to an empty list when no train.csv is present.
     problem_name = args.problem_name
-    df = pd.read_csv('./data/'+problem_name+'/train.csv')
-    data = np.array(df)
-    X = data[:, :-1]
-    y = data[:, -1].reshape(-1)
-    if 'torch' in args.spec_path:
-        X = torch.Tensor(X)
-        y = torch.Tensor(y)
-    data_dict = {'inputs': X, 'outputs': y}
-    dataset = {'data': data_dict} 
+    train_path = os.path.join('data', problem_name, 'train.csv')
+    if os.path.exists(train_path):
+        df = pd.read_csv(train_path)
+        data = np.array(df)
+        X = data[:, :-1]
+        y = data[:, -1].reshape(-1)
+        if 'torch' in args.spec_path:
+            X = torch.Tensor(X)
+            y = torch.Tensor(y)
+        data_dict = {'inputs': X, 'outputs': y}
+        dataset = {'data': data_dict}
+    else:
+        # No supervised train.csv for this problem (e.g. AKI); inputs are unused
+        # in the centralized synthetic-likelihood evaluation path.
+        dataset = []
     
     
     pipeline.main(

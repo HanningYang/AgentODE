@@ -278,6 +278,45 @@ def add_params_to_sample_log(sample_log_path: str, param_distributions: dict):
     return data
 
 
+def validate_param_distributions_format(
+    param_distributions: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Validate that all parameter entries have numeric `mean` and `sd`.
+
+    Rationale or other metadata fields are optional and are preserved when
+    present, but every parameter key must at least define `mean` and `sd`
+    that can be converted to floats. If this is not the case, a ValueError
+    is raised so callers can fall back to problem-level defaults.
+    """
+    if not isinstance(param_distributions, dict):
+        raise ValueError("param_distributions must be a JSON object mapping parameter indices to dictionaries.")
+
+    cleaned: Dict[str, Any] = {}
+    for key, value in param_distributions.items():
+        if not isinstance(value, dict):
+            raise ValueError(f"Parameter entry for key {key!r} must be an object.")
+        if "mean" not in value or "sd" not in value:
+            raise ValueError(f"Parameter entry for key {key!r} is missing 'mean' or 'sd'.")
+        try:
+            mean = float(value["mean"])
+            sd = float(value["sd"])
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Parameter entry for key {key!r} has non-numeric 'mean' or 'sd'.") from e
+
+        cleaned_entry: Dict[str, Any] = {"mean": mean, "sd": sd}
+        # Preserve optional rationale or other metadata fields.
+        for meta_key, meta_val in value.items():
+            if meta_key in ("mean", "sd"):
+                continue
+            cleaned_entry[meta_key] = meta_val
+        cleaned[str(key)] = cleaned_entry
+
+    if not cleaned:
+        raise ValueError("No valid parameter entries found in param_distributions.")
+
+    return cleaned
+
+
 def get_default_param_distributions(problem_name: str) -> Dict[str, Any] | None:
     """Return hard-coded default parameter distributions for a given problem.
 
@@ -292,16 +331,70 @@ def get_default_param_distributions(problem_name: str) -> Dict[str, Any] | None:
         }
     """
     if problem_name == 'aki':
-        # Defaults derived from the `sample_parameters_set` example, interpreted
-        # as lognormal means/SDs on the linear scale.
+        # Defaults derived from domain-informed AKI priors, interpreted as
+        # lognormal means/SDs on the linear scale. Rationale strings provide
+        # physiological justification for each parameter.
         return {
-            "0": {"mean": 0.03,  "sd": 0.02},
-            "1": {"mean": 0.10,  "sd": 0.025},
-            "2": {"mean": 0.60,  "sd": 0.30},
-            "3": {"mean": 0.04,  "sd": 0.008},
-            "4": {"mean": 0.005, "sd": 0.002},
-            "5": {"mean": 0.03,  "sd": 0.008},
-            "6": {"mean": 0.05,  "sd": 0.015},
+            "0": {
+                "mean": 0.01,
+                "sd": 0.006,
+                "rationale": "Creatinine production is relatively constant at ~0.01 mg/dL/h in adults, reflecting steady muscle metabolism, with moderate physiological variability.",
+            },
+            "1": {
+                "mean": 0.02,
+                "sd": 0.012,
+                "rationale": "Creatinine clearance is reduced in AKI; typical baseline clearance is ~0.02 mL/min/kg, converted to proportional scaling for 7-day dynamics with plausible variation.",
+            },
+            "2": {
+                "mean": 0.5,
+                "sd": 0.15,
+                "rationale": "BUN production is approximately 0.5 mg/dL/h from dietary protein metabolism, consistent with normal to mildly elevated rates in hospitalized adults.",
+            },
+            "3": {
+                "mean": 0.04,
+                "sd": 0.016,
+                "rationale": "BUN clearance scales with renal function; typical value reflects reduced but non-zero excretion in AKI, with variability due to patient-specific factors.",
+            },
+            "4": {
+                "mean": 0.3,
+                "sd": 0.12,
+                "rationale": "Potassium influx from diet and cellular turnover is ~0.3 mmol/L/h, accounting for steady input with expected physiological variation in hospitalized patients.",
+            },
+            "5": {
+                "mean": 0.06,
+                "sd": 0.018,
+                "rationale": "Potassium excretion is impaired in AKI; the baseline clearance coefficient is ~0.06 L/h, consistent with reduced renal handling and moderate uncertainty.",
+            },
+            "6": {
+                "mean": 0.01,
+                "sd": 0.006,
+                "rationale": "Creatinine's contribution to impairment feedback is moderate; a linear coefficient of ~0.01 reflects its role in signaling renal dysfunction with plausible physiological weight.",
+            },
+            "7": {
+                "mean": 1.0,
+                "sd": 0.2,
+                "rationale": "Baseline creatinine level at which impairment feedback is neutral is set at 1.0 mg/dL, representing normal baseline in adults aged 50–64.",
+            },
+            "8": {
+                "mean": 0.02,
+                "sd": 0.012,
+                "rationale": "BUN's contribution to impairment feedback is stronger than creatinine due to urea's high concentration; coefficient ~0.02 captures its greater pathophysiological impact.",
+            },
+            "9": {
+                "mean": 15.0,
+                "sd": 3.0,
+                "rationale": "Baseline BUN at which feedback is neutral is ~15 mg/dL, reflecting mild-to-moderate accumulation in early AKI without severe uremia.",
+            },
+            "10": {
+                "mean": 0.05,
+                "sd": 0.03,
+                "rationale": "Potassium's contribution to impairment feedback is significant due to its role in cellular homeostasis and toxicity; coefficient ~0.05 captures its sensitivity.",
+            },
+            "11": {
+                "mean": 4.5,
+                "sd": 0.6,
+                "rationale": "Baseline potassium level for neutral feedback is set at 4.5 mmol/L, representing normal homeostasis in adults and accounting for early AKI-related shifts.",
+            },
         }
 
     return None

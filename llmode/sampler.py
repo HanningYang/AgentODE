@@ -75,6 +75,9 @@ class Sampler:
                 break
             
             prompt = self._database.get_prompt()
+            print(f"\n{'='*80}")
+            print(f"Constructing prompt from Island #{prompt.island_id}")
+            print(f"{'='*80}")
             
             reset_time = time.time()
             samples = self._llm.draw_samples(prompt.code,self.config)
@@ -86,7 +89,8 @@ class Sampler:
                 cur_global_sample_nums = self._get_global_sample_nums()
                 chosen_evaluator: evaluator.Evaluator = np.random.choice(self._evaluators)
 
-                # Attach parameter distributions for this sample if available from the LLM.
+                # Attach parameter distributions and LLM metadata for this sample
+                # if available from the LLM / config.
                 extra_kwargs = {}
                 get_param_distributions = getattr(self._llm, 'get_param_distributions_for_sample', None)
                 if callable(get_param_distributions):
@@ -97,6 +101,26 @@ class Sampler:
                     if param_distributions is not None:
                         extra_kwargs['param_distributions'] = param_distributions
 
+                # Record which LLM backend/model produced this sample so it can
+                # be logged in the profiler JSON.
+                llm_source = 'api' if self.config.use_api else 'local'
+                extra_kwargs['llm_source'] = llm_source
+
+                llm_model_name = None
+                if self.config.use_api:
+                    llm_model_name = getattr(self.config, 'api_model', None)
+                else:
+                    # Prefer a name exposed by the LocalLLM implementation;
+                    # fall back to environment variables if unset.
+                    llm_model_name = getattr(self._llm, 'model_name', None)
+                    if llm_model_name is None:
+                        llm_model_name = (
+                            os.environ.get('LOCAL_LLM_MODEL_PATH')
+                            or os.environ.get('LOCAL_LLM_MODEL_NAME')
+                        )
+                if llm_model_name is not None:
+                    extra_kwargs['llm_model_name'] = llm_model_name
+
                 chosen_evaluator.analyse(
                     sample,
                     prompt.island_id,
@@ -106,6 +130,12 @@ class Sampler:
                     global_sample_nums=cur_global_sample_nums,
                     sample_time=sample_time
                 )
+
+            # print(f"\n{'='*80}")
+            # print(f"After Sample Batch #{self.__class__._global_samples_nums}")
+            # print(f"Sampled from Island #{prompt.island_id}, Generated version: v{prompt.version_generated}")
+            # print(f"{'='*80}")
+            self._database.print_island_info()
 
     def _get_global_sample_nums(self) -> int:
         return self.__class__._global_samples_nums
@@ -225,9 +255,9 @@ class LocalLLM(LLM):
         # instruction
         prompt = '\n'.join([self._instruction_prompt, prompt])
 
-        # print("=== Prompt being sent to LLM ===")
-        # print(prompt)
-        # print("=== End of prompt ===")
+        print("=== Prompt being sent to LLM ===")
+        print(prompt)
+        print("=== End of prompt ===")
 
         # Reset the cached parameter results for this batch.
         self._param_inference_results = None
@@ -247,6 +277,21 @@ class LocalLLM(LLM):
                         res = self._do_request(prompt)
                         raw_responses.append(res)
                         all_samples.append(res)
+
+                # Debug: pretty-print raw LLM responses before any trimming
+                print("\n=== Raw LLM response(s) (pre-trim) ===")
+                # for idx, sample in enumerate(all_samples, start=1):
+                #     print(f"\n----- Raw Sample #{idx} -----")
+                #     for lineno, line in enumerate(sample.splitlines(), start=1):
+                #         print(f"{lineno:3}: {line}")
+                #     print("----- End Raw Sample -----")
+                # print("=== End of raw LLM response(s) ===\n")
+
+                for idx, sample in enumerate(all_samples, start=1):
+                    print(f"\n----- Sample #{idx} (lines={len(sample.splitlines())}) -----")
+                    print(sample)
+                    print("----- End Sample -----")
+                print("=== End of raw LLM response(s) ===\n")
 
                 # trim equation program skeleton body from samples
                 if self._trim:
@@ -286,10 +331,21 @@ class LocalLLM(LLM):
 
                             # print("\n[Raw LLM Response for Parameters]")
                             # print(param_response if isinstance(param_response, str) else param_response[0])
+                            # raw_param_text = param_response if isinstance(param_response, str) else param_response[0]
+
+                            # print("\n=== Raw LLM response for parameters ===")
+                            # print(f"----- Param Sample #{i + 1} (lines={len(raw_param_text.splitlines())}) -----")
+                            # print(raw_param_text)
+                            # print("----- End Param Sample -----")
+                            # print("=== End of raw parameter response ===\n")
+
 
                             # Extract JSON
                             param_json_str = param_response if isinstance(param_response, str) else param_response[0]
                             param_distributions = param_utils.extract_json_from_llm_output(param_json_str)
+                            # Enforce that every parameter entry has numeric
+                            # mean/sd; if this fails, fall back to defaults.
+                            param_distributions = param_utils.validate_param_distributions_format(param_distributions)
 
                             print("\n[Extracted Parameter Distributions JSON]")
                             print(json.dumps(param_distributions, indent=2))
@@ -305,7 +361,11 @@ class LocalLLM(LLM):
                             self._param_inference_results.append(None)
 
                 return all_samples
-            except Exception:
+            except Exception as e:
+                # If the local LLM server is temporarily unavailable or crashes,
+                # wait briefly before retrying to avoid a busy loop.
+                print(f"[LocalLLM] Error during ODE/parameter sampling: {e}. Retrying in 5 seconds...")
+                time.sleep(30)
                 continue
 
 
@@ -343,7 +403,10 @@ class LocalLLM(LLM):
                     all_samples.append(response)
                     break
 
-                except Exception:
+                except Exception as e:
+                    # Back off on transient API errors instead of tight-looping.
+                    print(f"[LocalLLM] Error during API sampling: {e}. Retrying in 5 seconds...")
+                    time.sleep(30)
                     continue
         
         return all_samples
@@ -358,7 +421,7 @@ class LocalLLM(LLM):
             'prompt': content,
             'repeat_prompt': repeat_prompt,
             'params': {
-                'max_new_tokens': 2048,  # Increased from default 512 to allow complete responses
+                'max_new_tokens': 3072,  # Increased from default 512 to allow complete responses
                 'do_sample': True,
                 'temperature': None,
                 'top_k': None,
@@ -385,7 +448,7 @@ class LocalLLM(LLM):
             'prompt': content,
             'repeat_prompt': repeat_prompt,
             'params': {
-                'max_new_tokens': 1024,
+                'max_new_tokens': 3072,
                 'do_sample': True,
                 'temperature': None,
                 'top_k': None,

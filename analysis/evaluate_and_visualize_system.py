@@ -1,7 +1,7 @@
 """Visualize simulated ODE trajectories from discovered equations.
 
 Usage:
-    python evaluate_and_visualize_system.py --problem_name aki --sample_order 42 --log_path logs/aki_run1
+    python analysis/evaluate_and_visualize_system.py --problem_name aki --sample_order 42 --log_path logs/aki_run1
 """
 
 import argparse
@@ -49,6 +49,9 @@ def load_function_from_log(
         data = json.load(f)
 
     function_str = data['function']
+    print('Function:')
+    print(function_str)
+    print(64*'-')
     param_distributions = data.get('param_distributions')
 
     # Execute the function definition in an isolated namespace to obtain
@@ -296,6 +299,12 @@ def main():
         for idx, (name, so, ss) in enumerate(zip(stat_names, s_obs, s_sim)):
             diff = ss - so
             print(f"{idx:<4} {name:<40} {so:12.4f} {ss:12.4f} {diff:12.4f}")
+
+        # Euclidean distance between observed and simulated summary-statistics vectors.
+        diffs = s_sim - s_obs
+        euclidean_distance = float(np.linalg.norm(diffs))
+        print("-" * 84)
+        print(f"Euclidean distance (||s_sim - s_obs||_2): {euclidean_distance:.4f}")
     else:
         print(f"\nObserved data file not found at {observed_data_path}; skipping summary stats comparison.")
 
@@ -306,6 +315,8 @@ def main():
             system_func=system_func,
             problem_name=args.problem_name,
             param_distributions=param_distributions,
+            verbose=True,
+            sample_order=args.sample_order,
         )
         print(f"Synthetic Log-Likelihood (LogSL): {log_sl}")
         print(64*'=')
