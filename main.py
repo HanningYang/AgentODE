@@ -15,6 +15,8 @@ parser = ArgumentParser()
 parser.add_argument('--port', type=int, default=None)
 parser.add_argument('--use_api', type=bool, default=False)
 parser.add_argument('--api_model', type=str, default="gpt-3.5-turbo")
+parser.add_argument('--api_provider', type=str, default="openai",
+                    help="API provider to use when --use_api is True (e.g., 'openai' or 'deepseek').")
 parser.add_argument('--spec_path', type=str)
 parser.add_argument('--log_path', type=str, default="./logs/oscillator1")
 parser.add_argument('--problem_name', type=str, default="oscillator1")
@@ -28,7 +30,8 @@ if __name__ == '__main__':
     # Load config and parameters
     class_config = config.ClassConfig(llm_class=sampler.LocalLLM, sandbox_class=evaluator.LocalSandbox)
     config = config.Config(use_api = args.use_api, 
-                           api_model = args.api_model,)
+                           api_model = args.api_model,
+                           api_provider = args.api_provider,)
     global_max_sample_num = 10000
 
     # Load prompt specification

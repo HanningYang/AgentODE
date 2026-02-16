@@ -102,7 +102,7 @@ class Profiler:
             'sample_order': sample_order,
             'function': function_str,
             'score': score,
-            'param_distributions': programs.param_distributions
+            'param_distributions': programs.param_distributions,
         }
         path = os.path.join(self._json_dir, f'samples_{sample_order}.json')
         with open(path, 'w') as json_file:

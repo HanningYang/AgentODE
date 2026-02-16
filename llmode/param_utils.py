@@ -3,12 +3,17 @@
 import os
 import json
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Dict as TypingDict
 
 import numpy as np
+import requests
+import http.client
 
 from llmode import code_manipulation
 
+
+# Global flag to control debug printing for LLM prompts/outputs.
+DEBUG_PRINTS = os.environ.get("LLMODE_DEBUG_PRINTS", "0") == "1"
 
 # Fallback docstring used only when we cannot extract a canonical system
 # docstring from the current problem specification.
@@ -173,7 +178,7 @@ def build_param_inference_prompt(system_code: str, spec_template_path: str, func
         function_name: Name of the system function to analyze
 
     Returns:
-        Formatted prompt with system function inserted before "JSON Output Format"
+        Formatted prompt with system function inserted before "Instructions"
     """
     # Read the spec template
     with open(spec_template_path, 'r', encoding='utf-8') as f:
@@ -201,8 +206,8 @@ def build_param_inference_prompt(system_code: str, spec_template_path: str, func
             # If we cannot find the header, just prepend a canonical one.
             function_str = f'def {function_name}{function_str.split("def", 1)[-1]}'
 
-    # Insert function before "JSON Output Format"
-    insertion_marker = "JSON Output Format (strictly)"
+    # Insert function before "Instructions"
+    insertion_marker = "Instructions"
     if insertion_marker in spec_template:
         parts = spec_template.split(insertion_marker)
         prompt = parts[0] + function_str + "\n\n" + insertion_marker + parts[1]
@@ -211,6 +216,178 @@ def build_param_inference_prompt(system_code: str, spec_template_path: str, func
         prompt = spec_template + "\n\n" + function_str
 
     return prompt
+
+
+def _load_opt_sections(problem_name: str) -> dict:
+    """Load optimization prompt sections for a given problem.
+
+    Expects a file `specs_parameters/spec_parameters_opt_{problem}.txt` with
+    section headers like:
+
+        ### COMMON_INSTRUCTIONS_BEFORE
+        ...
+        ### MODE_IMPLAUSIBLE
+        ...
+        ### MODE_LOG_SL
+        ...
+        ### COMMON_INSTRUCTIONS_AFTER
+        ...
+    """
+    opt_path = os.path.join(
+        "specs_parameters", f"spec_parameters_opt_{problem_name}.txt"
+    )
+    if not os.path.exists(opt_path):
+        raise FileNotFoundError(
+            f"Optimization spec template not found at {opt_path}"
+        )
+
+    with open(opt_path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    sections: dict[str, str] = {}
+    current: Optional[str] = None
+    lines: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("### "):
+            if current is not None:
+                sections[current] = "\n".join(lines).strip()
+            current = line[4:].strip()
+            lines = []
+        else:
+            lines.append(line)
+    if current is not None:
+        sections[current] = "\n".join(lines).strip()
+    return sections
+
+
+def _infer_param_names_from_system(
+    system_code: str,
+    param_array_name: str = "params",
+) -> Dict[int, str]:
+    """Infer human-readable parameter names from ODE system code.
+
+    Looks for assignments of the form:
+        <name> = params[k]
+    and returns a mapping {k: name}.
+    """
+    pattern = rf'\b(\w+)\s*=\s*{param_array_name}\[(\d+)\]'
+    matches = re.findall(pattern, system_code)
+    mapping: Dict[int, str] = {}
+    for var_name, idx_str in matches:
+        try:
+            idx = int(idx_str)
+        except ValueError:
+            continue
+        mapping[idx] = var_name
+    return mapping
+
+
+def build_param_optimization_prompt(
+    system_code: str,
+    problem_name: str,
+    current_params: Dict[str, Any],
+    mode: str,
+    implaus_report: Optional[str],
+    sl_feedback: Optional[str],
+) -> str:
+    """Build a prompt for iterative parameter optimization.
+
+    The prompt is constructed as:
+      COMMON_INSTRUCTIONS_BEFORE
+
+      (system_code is inserted under the "ODE System" heading)
+      (parameter table is inserted under the existing
+       "Current parameter distributions (lognormal, values in linear space)" heading)
+
+      MODE_IMPLAUSIBLE + implausibility report  (if mode == 'implausible')
+      or
+      MODE_LOG_SL + SL feedback                 (if mode == 'log_sl')
+
+      COMMON_INSTRUCTIONS_AFTER
+    """
+    sections = _load_opt_sections(problem_name)
+    before = sections.get("COMMON_INSTRUCTIONS_BEFORE", "")
+    after = sections.get("COMMON_INSTRUCTIONS_AFTER", "")
+    if mode == "implausible":
+        middle = sections.get("MODE_IMPLAUSIBLE", "")
+    else:
+        middle = sections.get("MODE_LOG_SL", "")
+
+    # Build parameter table without the name column (some parameters may not
+    # have clear names); include rationale as a final column.
+    indices = _ordered_param_indices(current_params)
+    lines = ["idx\tmean(linear)\tsd(linear)\trationale"]
+    for idx in indices:
+        entry = current_params.get(str(idx), {})
+        mean = entry.get("mean", None)
+        sd = entry.get("sd", None)
+        if mean is None or sd is None:
+            continue
+        rationale = entry.get("rationale", "")
+        # Replace internal newlines/tabs in rationale to keep the table tidy.
+        rationale_clean = str(rationale).replace("\n", " ").replace("\t", " ")
+        lines.append(f"{idx}\t{float(mean):.4g}\t{float(sd):.4g}\t{rationale_clean}")
+    param_block = "\n".join(lines)
+
+    # 1) Insert system_code under the "ODE System" line inside COMMON_INSTRUCTIONS_BEFORE.
+    prompt_before = before or ""
+    sys_code = system_code.strip()
+    if sys_code:
+        ode_marker = "ODE System"
+        if ode_marker in prompt_before:
+            prompt_before = prompt_before.replace(
+                ode_marker,
+                ode_marker + "\n\n" + sys_code,
+                1,
+            )
+        else:
+            # Fallback: prepend the system definition if marker is missing.
+            prompt_before = sys_code + "\n\n" + prompt_before
+
+    # 2) Insert parameter table under the existing "Current parameter distributions" heading.
+    param_marker = "Current parameter distributions (lognormal, values in linear space)"
+    if param_marker in prompt_before:
+        prompt_before = prompt_before.replace(
+            param_marker,
+            param_marker + "\n\n" + param_block,
+            1,
+        )
+    else:
+        prompt_before = (
+            prompt_before
+            + "\n\n"
+            + param_marker
+            + "\n\n"
+            + param_block
+        )
+
+    parts: list[str] = []
+    if prompt_before.strip():
+        parts.append(prompt_before.strip())
+
+    if mode == "implausible":
+        if middle.strip():
+            parts.append(middle)
+            parts.append("")
+        if implaus_report:
+            # Template already contains the heading for the implausibility
+            # report; just append the report text.
+            parts.append(implaus_report.strip())
+            parts.append("")
+    else:
+        if middle.strip():
+            parts.append(middle)
+            parts.append("")
+        if sl_feedback:
+            # Template already contains the heading "Current best result and
+            # failure modes"; just append the feedback text.
+            parts.append(sl_feedback.strip())
+            parts.append("")
+
+    if after.strip():
+        parts.append(after)
+
+    return "\n".join(p for p in parts if p is not None)
 
 
 def extract_json_from_llm_output(llm_output: str) -> dict:
@@ -252,6 +429,116 @@ def extract_json_from_llm_output(llm_output: str) -> dict:
         return json.loads(json_str)
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON in LLM output: {e}")
+
+
+def _get_api_endpoint_and_headers(config: Any) -> tuple[str, str, dict]:
+    """Return (host, path, headers) for the configured API provider."""
+    provider = getattr(config, "api_provider", "openai")
+
+    if str(provider).lower() == "deepseek":
+        host = "api.deepseek.com"
+        path = "/chat/completions"
+        api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("API_KEY")
+    else:
+        host = "api.openai.com"
+        path = "/v1/chat/completions"
+        api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
+
+    if api_key is None:
+        env_name = "DEEPSEEK_API_KEY" if str(provider).lower() == "deepseek" else "OPENAI_API_KEY"
+        raise RuntimeError(
+            "No API key found for provider "
+            f"'{provider}'. Please set '{env_name}' or a generic 'API_KEY' environment variable."
+        )
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "User-Agent": "LLMODE/1.0",
+        "Content-Type": "application/json",
+    }
+    return host, path, headers
+
+
+def run_param_optimization_llm(prompt: str, config: Any) -> Optional[Dict[str, Any]]:
+    """Query the parameter LLM for an updated set of param distributions.
+
+    This mirrors the behavior of `LocalLLM._do_param_request` / `_do_param_request_api`
+    but is invoked from the evaluator during iterative optimization.
+    """
+    prompt = prompt.strip()
+    if not prompt:
+        return None
+
+    llm_output: Optional[str] = None
+
+    if not getattr(config, "use_api", False):
+        # Local parameter LLM server (port 5001).
+        data = {
+            "prompt": prompt,
+            "repeat_prompt": 1,
+            "params": {
+                "max_new_tokens": 3072,
+                "do_sample": True,
+                "temperature": None,
+                "top_k": None,
+                "top_p": None,
+                "add_special_tokens": False,
+                "skip_special_tokens": True,
+            },
+        }
+        headers = {"Content-Type": "application/json"}
+        try:
+            resp = requests.post(
+                "http://127.0.0.1:5001/completions",
+                data=json.dumps(data),
+                headers=headers,
+                timeout=60,
+            )
+            resp.raise_for_status()
+            content = resp.json().get("content")
+            llm_output = content if isinstance(content, str) else (content[0] if content else None)
+        except Exception as e:
+            print(f"[Param optimization] Local parameter LLM request failed: {e}")
+            return None
+    else:
+        # API-based parameter inference.
+        try:
+            host, path, headers = _get_api_endpoint_and_headers(config)
+            conn = http.client.HTTPSConnection(host)
+            payload = json.dumps(
+                {
+                    "max_tokens": 8192,
+                    "model": getattr(config, "api_model", "gpt-3.5-turbo"),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": prompt,
+                        }
+                    ],
+                }
+            )
+            conn.request("POST", path, payload, headers)
+            res = conn.getresponse()
+            data = json.loads(res.read().decode("utf-8"))
+            llm_output = data["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"[Param optimization] API parameter LLM request failed: {e}")
+            return None
+
+    if not llm_output:
+        return None
+
+    # Debug: show raw parameter LLM response before JSON extraction.
+    if DEBUG_PRINTS:
+        print("\n[Raw LLM Response for Parameters]")
+        print(llm_output)
+
+    try:
+        raw_json = extract_json_from_llm_output(llm_output)
+        return validate_param_distributions_format(raw_json)
+    except Exception as e:
+        print(f"[Param optimization] Failed to parse parameter JSON: {e}")
+        return None
 
 
 def add_params_to_sample_log(sample_log_path: str, param_distributions: dict):
@@ -331,71 +618,174 @@ def get_default_param_distributions(problem_name: str) -> Dict[str, Any] | None:
         }
     """
     if problem_name == 'aki':
-        # Defaults derived from domain-informed AKI priors, interpreted as
-        # lognormal means/SDs on the linear scale. Rationale strings provide
-        # physiological justification for each parameter.
+        # Defaults for the 3-biomarker AKI system (Creatinine, BUN, Potassium)
+        # with a latent recovery process R. These are interpreted as linear-space
+        # means/SDs for lognormal sampling downstream.
         return {
-            "0": {
-                "mean": 0.01,
-                "sd": 0.006,
-                "rationale": "Creatinine production is relatively constant at ~0.01 mg/dL/h in adults, reflecting steady muscle metabolism, with moderate physiological variability.",
-            },
-            "1": {
-                "mean": 0.02,
-                "sd": 0.012,
-                "rationale": "Creatinine clearance is reduced in AKI; typical baseline clearance is ~0.02 mL/min/kg, converted to proportional scaling for 7-day dynamics with plausible variation.",
-            },
-            "2": {
-                "mean": 0.5,
-                "sd": 0.15,
-                "rationale": "BUN production is approximately 0.5 mg/dL/h from dietary protein metabolism, consistent with normal to mildly elevated rates in hospitalized adults.",
-            },
-            "3": {
-                "mean": 0.04,
-                "sd": 0.016,
-                "rationale": "BUN clearance scales with renal function; typical value reflects reduced but non-zero excretion in AKI, with variability due to patient-specific factors.",
-            },
-            "4": {
-                "mean": 0.3,
-                "sd": 0.12,
-                "rationale": "Potassium influx from diet and cellular turnover is ~0.3 mmol/L/h, accounting for steady input with expected physiological variation in hospitalized patients.",
-            },
-            "5": {
-                "mean": 0.06,
-                "sd": 0.018,
-                "rationale": "Potassium excretion is impaired in AKI; the baseline clearance coefficient is ~0.06 L/h, consistent with reduced renal handling and moderate uncertainty.",
-            },
-            "6": {
-                "mean": 0.01,
-                "sd": 0.006,
-                "rationale": "Creatinine's contribution to impairment feedback is moderate; a linear coefficient of ~0.01 reflects its role in signaling renal dysfunction with plausible physiological weight.",
-            },
-            "7": {
-                "mean": 1.0,
-                "sd": 0.2,
-                "rationale": "Baseline creatinine level at which impairment feedback is neutral is set at 1.0 mg/dL, representing normal baseline in adults aged 50–64.",
-            },
-            "8": {
-                "mean": 0.02,
-                "sd": 0.012,
-                "rationale": "BUN's contribution to impairment feedback is stronger than creatinine due to urea's high concentration; coefficient ~0.02 captures its greater pathophysiological impact.",
-            },
-            "9": {
-                "mean": 15.0,
-                "sd": 3.0,
-                "rationale": "Baseline BUN at which feedback is neutral is ~15 mg/dL, reflecting mild-to-moderate accumulation in early AKI without severe uremia.",
-            },
-            "10": {
-                "mean": 0.05,
-                "sd": 0.03,
-                "rationale": "Potassium's contribution to impairment feedback is significant due to its role in cellular homeostasis and toxicity; coefficient ~0.05 captures its sensitivity.",
-            },
-            "11": {
-                "mean": 4.5,
-                "sd": 0.6,
-                "rationale": "Baseline potassium level for neutral feedback is set at 4.5 mmol/L, representing normal homeostasis in adults and accounting for early AKI-related shifts.",
-            },
+            "0": {"mean": 0.25, "sd": 0.18, "rationale": "Initial effective clearance in hospitalized AKI is often markedly reduced but variable, so R_min is centered low with broad spread while remaining physiologically plausible."},
+            "1": {"mean": 0.80, "sd": 0.20, "rationale": "Most patients partially recover toward near-normal clearance within a week but not always fully, so R_max is centered below 1 with moderate variability."},
+            "2": {"mean": 0.015, "sd": 0.010, "rationale": "A recovery rate of ~0.015 1/h implies a 2–4 day timescale consistent with observed 7-day improvement while allowing slower/faster recoveries."},
+            "3": {"mean": 0.008, "sd": 0.006, "rationale": "Net creatinine input is kept small so Cr dynamics are primarily clearance-driven, but variability allows catabolic states or muscle mass effects to shift trajectories."},
+            "4": {"mean": 0.050, "sd": 0.025, "rationale": "Renal Cr clearance coefficient is set so typical effective decay rates (k_CrR·R) yield ~1–3 day relaxation toward Cr_ref over 168 hours."},
+            "5": {"mean": 0.004, "sd": 0.003, "rationale": "Nonrenal Cr clearance is small relative to renal clearance but nonzero to prevent unrealistically persistent elevations when R is very low."},
+            "6": {"mean": 1.00, "sd": 0.35, "rationale": "Cr_ref represents an individual's baseline setpoint (often ~0.7–1.3 mg/dL) with moderate spread for age/sex/muscle mass differences."},
+            "7": {"mean": 0.060, "sd": 0.040, "rationale": "BUN production is allowed to be meaningfully positive (catabolism/protein load) with wide variability to permit slow or absent BUN decline despite improving clearance."},
+            "8": {"mean": 0.008, "sd": 0.004, "rationale": "Renal BUN clearance is set lower than Cr to produce slower, more gradual BUN recovery over days rather than rapid normalization."},
+            "9": {"mean": 0.0015, "sd": 0.0010, "rationale": "Nonrenal BUN loss is small (e.g., GI losses/dialysis-unmodeled effects) but included to avoid implausibly static BUN in low-R scenarios."},
+            "10": {"mean": 16.0, "sd": 6.0, "rationale": "BUN_ref is centered near normal range with enough spread to capture baseline differences from diet, liver function, and chronic comorbidity."},
+            "11": {"mean": 4.10, "sd": 0.25, "rationale": "K_ref is tightly centered around physiologic setpoint to reflect homeostatic control while permitting patient-level variation (meds, acid-base status)."},
+            "12": {"mean": 0.35, "sd": 0.20, "rationale": "Extrarenal buffering is fast (hours; ~0.35 1/h) to keep potassium nearly flat despite perturbations, with variability for insulin/catecholamine effects."},
+            "13": {"mean": 0.060, "sd": 0.035, "rationale": "Renal K excretion gain is moderate so that improving R adds stabilization over 1–2 days without dominating the rapid buffering term."},
+            "14": {"mean": 0.010, "sd": 0.010, "rationale": "Baseline retention/shift source is small (mmol/L/h) so potassium does not drift excessively, but can rise modestly when R is low."},
+            "15": {"mean": 0.0020, "sd": 0.0020, "rationale": "Creatinine-coupled severity on K is kept weak so even large Cr elevations only add modest K load, yet variability allows occasional clinically relevant hyperkalemic tendency."},
+            "16": {"mean": 0.00030, "sd": 0.00030, "rationale": "BUN-coupled severity on K is smaller per unit than Cr to prevent unrealistically large K forcing from high BUN while allowing uremic severity to contribute."},
+            "17": {"mean": 2.0, "sd": 0.8, "rationale": "Creatinine severity threshold is near the cohort's early values so only above-moderate AKI amplifies K shifts, with spread for baseline CKD vs de novo AKI."},
+            "18": {"mean": 30.0, "sd": 10.0, "rationale": "BUN severity threshold is set around mild elevation so K coupling activates primarily in more uremic patients, with wide spread for nutritional/catabolic differences."},
         }
+
+        # Second option for 3 variables scenario - Defaults for the 5-biomarker
+        # AKI system (Creatinine, BUN, Potassium, Sodium, Hemoglobin) with a
+        # latent injury process.
+        #
+        # return {
+        #     "0": {
+        #         "mean": 0.03,
+        #         "sd": 0.015,
+        #         "rationale": "Represents hourly creatinine generation from muscle metabolism, scaled for adult body mass.",
+        #     },
+        #     "1": {
+        #         "mean": 0.06,
+        #         "sd": 0.03,
+        #         "rationale": "Baseline reciprocal of creatinine's elimination time constant (approx. 16.7 hours for normal GFR).",
+        #     },
+        #     "2": {
+        #         "mean": 0.8,
+        #         "sd": 0.4,
+        #         "rationale": "Hourly urea nitrogen generation from protein catabolism, scaled for typical AKI catabolic state.",
+        #     },
+        #     "3": {
+        #         "mean": 0.07,
+        #         "sd": 0.035,
+        #         "rationale": "Baseline reciprocal of BUN's elimination time constant, reflecting renal clearance.",
+        #     },
+        #     "4": {
+        #         "mean": 0.025,
+        #         "sd": 0.01,
+        #         "rationale": "Hourly net potassium influx from diet and cellular shifts in AKI.",
+        #     },
+        #     "5": {
+        #         "mean": 0.05,
+        #         "sd": 0.025,
+        #         "rationale": "Baseline reciprocal of potassium's renal excretion time constant.",
+        #     },
+        #     "6": {
+        #         "mean": 0.008,
+        #         "sd": 0.004,
+        #         "rationale": "Injury growth rate yielding sub-maximal injury over 3-5 days on an hourly scale.",
+        #     },
+        #     "7": {
+        #         "mean": 1.2,
+        #         "sd": 0.5,
+        #         "rationale": "Maximum injury burden, an order-one scaling factor modulating clearance loss.",
+        #     },
+        #     "8": {
+        #         "mean": 0.5,
+        #         "sd": 0.2,
+        #         "rationale": "Sensitivity of clearance loss to injury, allowing for partial (not total) GFR loss.",
+        #     },
+        #     "9": {
+        #         "mean": 0.002,
+        #         "sd": 0.001,
+        #         "rationale": "Coupling coefficient for sodium's influence on potassium, kept small to prevent runaway feedback.",
+        #     },
+        #     "10": {
+        #         "mean": 138.0,
+        #         "sd": 2.5,
+        #         "rationale": "Sodium homeostatic set point within normal physiological range.",
+        #     },
+        #     "11": {
+        #         "mean": 0.02,
+        #         "sd": 0.01,
+        #         "rationale": "Reciprocal of sodium correction time constant (approx. 2-3 days) for dilutional changes.",
+        #     },
+        #     "12": {
+        #         "mean": 0.015,
+        #         "sd": 0.0075,
+        #         "rationale": "Reciprocal of hemoglobin recovery time constant (approx. 3-4 days) accounting for hemodilution and EPO response.",
+        #     },
+        #     "13": {
+        #         "mean": 12.5,
+        #         "sd": 1.5,
+        #         "rationale": "Hemoglobin homeostatic set point for a hospitalized adult with potential hemodilution.",
+        #     },
+        # }
+
+        # Legacy defaults for earlier 3-biomarker AKI systems (Creatinine,
+        # BUN, Potassium) without explicit Sodium/Hemoglobin states. Kept
+        # for reference only; not used in the current 5-variable setup.
+        #
+        # legacy_defaults_aki_3var = {
+        #     "0": {
+        #         "mean": 0.01,
+        #         "sd": 0.006,
+        #         "rationale": "Creatinine production is relatively constant at ~0.01 mg/dL/h in adults, reflecting steady muscle metabolism, with moderate physiological variability.",
+        #     },
+        #     "1": {
+        #         "mean": 0.02,
+        #         "sd": 0.012,
+        #         "rationale": "Creatinine clearance is reduced in AKI; typical baseline clearance is ~0.02 mL/min/kg, converted to proportional scaling for 7-day dynamics with plausible variation.",
+        #     },
+        #     "2": {
+        #         "mean": 0.5,
+        #         "sd": 0.15,
+        #         "rationale": "BUN production is approximately 0.5 mg/dL/h from dietary protein metabolism, consistent with normal to mildly elevated rates in hospitalized adults.",
+        #     },
+        #     "3": {
+        #         "mean": 0.04,
+        #         "sd": 0.016,
+        #         "rationale": "BUN clearance scales with renal function; typical value reflects reduced but non-zero excretion in AKI, with variability due to patient-specific factors.",
+        #     },
+        #     "4": {
+        #         "mean": 0.3,
+        #         "sd": 0.12,
+        #         "rationale": "Potassium influx from diet and cellular turnover is ~0.3 mmol/L/h, accounting for steady input with expected physiological variation in hospitalized patients.",
+        #     },
+        #     "5": {
+        #         "mean": 0.06,
+        #         "sd": 0.018,
+        #         "rationale": "Potassium excretion is impaired in AKI; the baseline clearance coefficient is ~0.06 L/h, consistent with reduced renal handling and moderate uncertainty.",
+        #     },
+        #     "6": {
+        #         "mean": 0.01,
+        #         "sd": 0.006,
+        #         "rationale": "Creatinine's contribution to impairment feedback is moderate; a linear coefficient of ~0.01 reflects its role in signaling renal dysfunction with plausible physiological weight.",
+        #     },
+        #     "7": {
+        #         "mean": 1.0,
+        #         "sd": 0.2,
+        #         "rationale": "Baseline creatinine level at which impairment feedback is neutral is set at 1.0 mg/dL, representing normal baseline in adults aged 50–64.",
+        #     },
+        #     "8": {
+        #         "mean": 0.02,
+        #         "sd": 0.012,
+        #         "rationale": "BUN's contribution to impairment feedback is stronger than creatinine due to urea's high concentration; coefficient ~0.02 captures its greater pathophysiological impact.",
+        #     },
+        #     "9": {
+        #         "mean": 15.0,
+        #         "sd": 3.0,
+        #         "rationale": "Baseline BUN at which feedback is neutral is ~15 mg/dL, reflecting mild-to-moderate accumulation in early AKI without severe uremia.",
+        #     },
+        #     "10": {
+        #         "mean": 0.05,
+        #         "sd": 0.03,
+        #         "rationale": "Potassium's contribution to impairment feedback is significant due to its role in cellular homeostasis and toxicity; coefficient ~0.05 captures its sensitivity.",
+        #     },
+        #     "11": {
+        #         "mean": 4.5,
+        #         "sd": 0.6,
+        #         "rationale": "Baseline potassium level for neutral feedback is set at 4.5 mmol/L, representing normal homeostasis in adults and accounting for early AKI-related shifts.",
+        #     },
+        # }
 
     return None
 
@@ -436,6 +826,30 @@ def param_distributions_to_arrays(
         means.append(float(entry["mean"]))
         sds.append(float(entry["sd"]))
     return np.asarray(means, dtype=float), np.asarray(sds, dtype=float)
+
+
+def format_param_distributions(
+    param_distributions: Dict[str, Any],
+) -> str:
+    """Return a human-readable table of parameter priors.
+
+    Format:
+        idx    name    mean(linear)    sd(linear)
+
+    The `name` column is taken from `entry.get("name")` when present; otherwise
+    it falls back to the stringified index.
+    """
+    indices = _ordered_param_indices(param_distributions)
+    lines = ["idx\tname\tmean(linear)\tsd(linear)"]
+    for idx in indices:
+        entry = param_distributions.get(str(idx), {})
+        name = entry.get("name", str(idx))
+        mean = entry.get("mean", None)
+        sd = entry.get("sd", None)
+        if mean is None or sd is None:
+            continue
+        lines.append(f"{idx}\t{name}\t{float(mean):.4g}\t{float(sd):.4g}")
+    return "\n".join(lines)
 
 
 def sample_params_from_distributions(

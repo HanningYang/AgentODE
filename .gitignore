@@ -8,3 +8,27 @@ __pycache__/
 # Logs
 logs/
 
+# Analysis scripts
+analysis/evaluate_mse_real_data.py
+analysis/inspect_system_from_log.py
+analysis/plot_empirical_aki_data.py
+analysis/rank_diffcorr_distance.py
+analysis/rank_quadratic_scores.py
+
+# AKI data files
+data/aki/aki_5biomarkers.csv
+data/aki/aki_biomarkers_temporal2.png
+data/aki/aki_biomarkers_temporal3.png
+data/aki/aki_biomarkers_temporal4.png
+data/aki/aki_eva_3var.csv
+data/aki/aki_eva_5var.csv
+
+# Config variants
+initial_conditions/aki_config_5var.json
+
+# Spec variants
+specs_parameters/spec_parameters_aki_3var_v1.txt
+specs_parameters/spec_parameters_aki_3var_v2.txt
+specs_parameters/spec_parameters_aki_5var.txt
+specs_skeleton/specification_aki_numpy_3var.txt
+specs_skeleton/specification_aki_numpy_5var.txt

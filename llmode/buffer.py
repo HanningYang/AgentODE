@@ -137,9 +137,10 @@ class ExperienceBuffer:
         self._islands[island_id].register_program(program, scores_per_test)
         
         # logging, and archive bookkeeping.
-        # score = round(float(_reduce_score(scores_per_test)), 3) # 3 decimals for clustering,
-
-        score = int(round(float(_reduce_score(scores_per_test))))
+        # Aggregate over tests and round to 2 decimals so that
+        # stored scores (e.g., in JSON logs) are consistent with
+        # per-test rounding.
+        score = round(float(_reduce_score(scores_per_test)), 2)
 
         if score > self._best_score_per_island[island_id]:
             self._best_program_per_island[island_id] = program

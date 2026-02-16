@@ -1,6 +1,9 @@
 """Utilities for simulating ODE systems with generated initial conditions."""
 
 import os
+import inspect
+import io
+import contextlib
 
 import numpy as np
 from scipy.integrate import odeint
@@ -49,7 +52,9 @@ def simulate_ode_system(
     """Simulate an ODE system for multiple initial conditions.
 
     Args:
-        system_func: Function with signature (biomarkers, params) -> derivatives
+        system_func: Function with signature either
+            (biomarkers, params) -> derivatives
+            or (biomarkers, params, t) -> derivatives
         initial_conditions: Array of shape (n_samples, n_biomarkers) with initial values
         time_grid: Array of time points for simulation
         params: Array of parameter values for the ODE system. Can be:
@@ -62,7 +67,7 @@ def simulate_ode_system(
         Array of shape (n_samples, n_timepoints, n_biomarkers) with trajectories
 
     Example:
-        >>> def system(biomarkers, params):
+        >>> def system(biomarkers, params, t):
         ...     return np.array([params[0] - params[1] * biomarkers[0]])
         >>> ic = np.array([[1.0], [2.0]])  # 2 samples, 1 biomarker
         >>> t = np.linspace(0, 10, 100)
@@ -94,11 +99,25 @@ def simulate_ode_system(
             f"Unsupported params shape {params.shape}; expected 1D or 2D array."
         )
 
+    # Detect whether the provided system function expects an explicit time
+    # argument. We support both (biomarkers, params) and
+    # (biomarkers, params, t) signatures for backwards compatibility.
+    accepts_time = False
+    try:
+        sig = inspect.signature(system_func)
+        param_names = list(sig.parameters.keys())
+        if len(param_names) >= 3 and param_names[2] in ('t', 'time', 'time_point'):
+            accepts_time = True
+    except (TypeError, ValueError):
+        accepts_time = False
+
     if method == 'odeint':
         global _NUMERICAL_WARNING_PRINTED
         for i in range(n_samples):
             # Wrapper to match odeint's expected signature: f(y, t)
-            def ode_func(y, t, local_params=params_per_sample[i]):
+            def ode_func(y, t, local_params=params_per_sample[i], use_time=accepts_time):
+                if use_time:
+                    return system_func(y, local_params, t)
                 return system_func(y, local_params)
 
             try:
@@ -527,6 +546,100 @@ def check_trajectory_normal_range_validity(
     return valid_mask, issue_counts
 
 
+def print_unplausible_trajectory_report(
+    trajectories: np.ndarray,
+    config: dict,
+    check_nans: bool = True,
+    max_examples: int = 5,
+) -> None:
+    """Print a human-readable report of implausible trajectories.
+
+    This is intended for debugging during ODE discovery when many simulated
+    patients are rejected as physiologically implausible. It summarizes which
+    patients and biomarkers are causing problems, aggregated over patients.
+
+    Args:
+        trajectories: Array of shape (n_samples, n_timepoints, n_biomarkers).
+        config: Initial-condition configuration dictionary.
+        check_nans: Whether to treat NaNs as implausible.
+        max_examples: Unused; kept for backward compatibility.
+    """
+    n_samples, n_timepoints, n_biomarkers = trajectories.shape
+    biomarker_names = initial_condition_utils.get_biomarker_order(config)
+
+    valid_mask, issue_counts = check_trajectory_normal_range_validity(
+        trajectories,
+        config=config,
+        check_nans=check_nans,
+    )
+
+    # Per-biomarker issue counts: how many patients have each type of issue
+    # for a given biomarker at least once.
+    per_biomarker_counts = {
+        'has_nan': {name: 0 for name in biomarker_names},
+        'negative_values': {name: 0 for name in biomarker_names},
+        'outside_normal_range': {name: 0 for name in biomarker_names},
+    }
+
+    for i in range(n_samples):
+        traj = trajectories[i]
+
+        # NaNs per biomarker
+        if check_nans:
+            for j, name in enumerate(biomarker_names):
+                if np.any(np.isnan(traj[:, j])):
+                    per_biomarker_counts['has_nan'][name] += 1
+
+        # Negative values per biomarker
+        for j, name in enumerate(biomarker_names):
+            if np.any(traj[:, j] < 0):
+                per_biomarker_counts['negative_values'][name] += 1
+
+        # Outside normal range per biomarker
+        for j, name in enumerate(biomarker_names):
+            phys_range = config['biomarkers'][name].get('physiological_range')
+            if not phys_range:
+                continue
+            normal_min = phys_range.get('normal_min')
+            normal_max = phys_range.get('normal_max')
+            if normal_min is None or normal_max is None:
+                continue
+            vals = traj[:, j]
+            if np.any(vals < normal_min) or np.any(vals > normal_max):
+                per_biomarker_counts['outside_normal_range'][name] += 1
+
+    n_valid = int(valid_mask.sum())
+    n_invalid = n_samples - n_valid
+
+    print("\n[Implausible Trajectories Report]")
+    print(f"  Patients (samples)              : {n_samples}")
+    print(f"  Time points per trajectory      : {n_timepoints}")
+    print(f"  Biomarkers per patient          : {n_biomarkers}")
+    print(f"  Valid trajectories              : {n_valid} / {n_samples}")
+    print(f"  Invalid trajectories            : {n_invalid}")
+    print("  Issue counts across patients    :")
+
+    def _format_per_biomarker(issue_key: str) -> str:
+        parts = []
+        for name in biomarker_names:
+            count = per_biomarker_counts[issue_key].get(name, 0)
+            if count > 0:
+                parts.append(f"{name} {count}")
+        if not parts:
+            return ""
+        return " (" + ", ".join(parts) + ")"
+
+    for key in ['has_nan', 'negative_values', 'outside_normal_range']:
+        total = issue_counts.get(key, 0)
+        suffix = _format_per_biomarker(key)
+        print(f"    - {key}: {total}{suffix}")
+
+    if n_invalid == 0:
+        print("  All trajectories are within physiological normal ranges.\n")
+    else:
+        print("============================================\n")
+
+
 def save_trajectories(
     trajectories: np.ndarray,
     time_grid: np.ndarray,
@@ -562,3 +675,23 @@ def save_trajectories(
     print(f"Saved trajectories to {output_path}")
     print(f"  Shape: {trajectories.shape}")
     print(f"  Size: {trajectories.nbytes / 1024 / 1024:.2f} MB")
+
+
+def get_unplausible_trajectory_report(
+    trajectories: np.ndarray,
+    config: dict,
+    check_nans: bool = True,
+) -> str:
+    """Return the text printed by `print_unplausible_trajectory_report`.
+
+    This is a thin wrapper that captures stdout so the caller can embed the
+    report text directly in LLM prompts.
+    """
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        print_unplausible_trajectory_report(
+            trajectories=trajectories,
+            config=config,
+            check_nans=check_nans,
+        )
+    return buf.getvalue()

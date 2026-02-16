@@ -53,7 +53,7 @@
     }
   },
   "simulation_params": {
-    "default_sample_size":30,
+    "default_sample_size":100,
     "time_span": [0, 168],
     "time_unit": "hours",
     "time_points": 30,

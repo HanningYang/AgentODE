@@ -30,6 +30,9 @@ import http.client
 import os
 
 
+# Global flag to control debug printing for prompts / LLM outputs.
+DEBUG_PRINTS = os.environ.get("LLMODE_DEBUG_PRINTS", "0") == "1"
+
 
 class LLM(ABC):
     def __init__(self, samples_per_prompt: int) -> None:
@@ -75,9 +78,10 @@ class Sampler:
                 break
             
             prompt = self._database.get_prompt()
-            print(f"\n{'='*80}")
-            print(f"Constructing prompt from Island #{prompt.island_id}")
-            print(f"{'='*80}")
+            if DEBUG_PRINTS:
+                print(f"\n{'='*80}")
+                print(f"Constructing prompt from Island #{prompt.island_id}")
+                print(f"{'='*80}")
             
             reset_time = time.time()
             samples = self._llm.draw_samples(prompt.code,self.config)
@@ -89,18 +93,8 @@ class Sampler:
                 cur_global_sample_nums = self._get_global_sample_nums()
                 chosen_evaluator: evaluator.Evaluator = np.random.choice(self._evaluators)
 
-                # Attach parameter distributions and LLM metadata for this sample
-                # if available from the LLM / config.
+                # Attach LLM metadata for this sample.
                 extra_kwargs = {}
-                get_param_distributions = getattr(self._llm, 'get_param_distributions_for_sample', None)
-                if callable(get_param_distributions):
-                    try:
-                        param_distributions = get_param_distributions(idx)
-                    except Exception:
-                        param_distributions = None
-                    if param_distributions is not None:
-                        extra_kwargs['param_distributions'] = param_distributions
-
                 # Record which LLM backend/model produced this sample so it can
                 # be logged in the profiler JSON.
                 llm_source = 'api' if self.config.use_api else 'local'
@@ -127,6 +121,7 @@ class Sampler:
                     prompt.version_generated,
                     **kwargs,
                     **extra_kwargs,
+                    config=self.config,
                     global_sample_nums=cur_global_sample_nums,
                     sample_time=sample_time
                 )
@@ -233,7 +228,12 @@ class LocalLLM(LLM):
 
         instruction_prompt = ("You are a biomedical systems modeling expert tasked with discovering ordinary differential equations (ODEs) structures for disease progression. \
                               Complete the incomplete ode system function below, considering the biological roles of each biomarker, their interactions, and plausible pathological dynamics. \
-                              Let’s think step by step, but provide only (1) a final brief explanation (2-5 sentences) of your reasoning, followed by (2) the completed ODE expressions.  \n\n")
+                              Let’s think step by step, but provide only (1) a final brief explanation (2-5 sentences) of your reasoning, limitations and unmodeled effects, followed by (2) the completed ODE expressions.  \n\n")
+        
+        # instruction_prompt = ("You are an expert in mathematical biology, renal physiology, and dynamical systems modeling. Your task is to propose ordinary differential equations (ODEs) structures that describes the temporal dynamics of key biomarkers during recovery from Acute Kidney Injury (AKI) patients. \
+        #                       Complete the incomplete ode system function below, considering the biological roles of each biomarker, their interactions, and plausible pathological dynamics. \
+        #                       Let’s think step by step, but provide only (1) a final brief explanation of your reasoning, limitations and unmodeled effects, followed by (2) the completed ODE expressions.  \n\n")
+
 
         self._batch_inference = batch_inference
         self._url = url
@@ -241,6 +241,33 @@ class LocalLLM(LLM):
         self._instruction_prompt = instruction_prompt
         self._trim = trim
         self._param_inference_results = None
+
+    def _get_api_endpoint_and_headers(self, config: config_lib.Config) -> tuple[str, str, dict]:
+        """Return (host, path, headers) for the configured API provider."""
+        provider = getattr(config, 'api_provider', 'openai')
+
+        if provider.lower() == 'deepseek':
+            host = "api.deepseek.com"
+            path = "/chat/completions"
+            api_key = os.environ.get('DEEPSEEK_API_KEY') or os.environ.get('API_KEY')
+        else:
+            host = "api.openai.com"
+            path = "/v1/chat/completions"
+            api_key = os.environ.get('OPENAI_API_KEY') or os.environ.get('API_KEY')
+
+        if api_key is None:
+            env_name = 'DEEPSEEK_API_KEY' if provider.lower() == 'deepseek' else 'OPENAI_API_KEY'
+            raise RuntimeError(
+                "No API key found for provider "
+                f"'{provider}'. Please set '{env_name}' or a generic 'API_KEY' environment variable."
+            )
+
+        headers = {
+            'Authorization': f"Bearer {api_key}",
+            'User-Agent': 'LLMODE/1.0',
+            'Content-Type': 'application/json'
+        }
+        return host, path, headers
 
 
     def draw_samples(self, prompt: str, config: config_lib.Config) -> Collection[str]:
@@ -255,9 +282,11 @@ class LocalLLM(LLM):
         # instruction
         prompt = '\n'.join([self._instruction_prompt, prompt])
 
-        print("=== Prompt being sent to LLM ===")
-        print(prompt)
-        print("=== End of prompt ===")
+        # Debug: prompt sent to the ODE LLM.
+        if DEBUG_PRINTS:
+            print("=== Prompt being sent to LLM ===")
+            print(prompt)
+            print("=== End of prompt ===")
 
         # Reset the cached parameter results for this batch.
         self._param_inference_results = None
@@ -265,100 +294,29 @@ class LocalLLM(LLM):
         while True:
             try:
                 all_samples = []
-                raw_responses = []
                 # response from llm server
                 if self._batch_inference:
                     response = self._do_request(prompt)
                     for res in response:
-                        raw_responses.append(res)
                         all_samples.append(res)
                 else:
                     for _ in range(self._samples_per_prompt):
                         res = self._do_request(prompt)
-                        raw_responses.append(res)
                         all_samples.append(res)
 
-                # Debug: pretty-print raw LLM responses before any trimming
-                print("\n=== Raw LLM response(s) (pre-trim) ===")
-                # for idx, sample in enumerate(all_samples, start=1):
-                #     print(f"\n----- Raw Sample #{idx} -----")
-                #     for lineno, line in enumerate(sample.splitlines(), start=1):
-                #         print(f"{lineno:3}: {line}")
-                #     print("----- End Raw Sample -----")
-                # print("=== End of raw LLM response(s) ===\n")
+                # Debug: pretty-print raw ODE LLM responses before any trimming.
+                if DEBUG_PRINTS:
+                    print("\n=== Raw LLM response(s) (pre-trim) ===")
+                    for idx, sample in enumerate(all_samples, start=1):
+                        print(f"\n----- Raw Sample #{idx} -----")
+                        for lineno, line in enumerate(sample.splitlines(), start=1):
+                            print(f"{lineno:3}: {line}")
+                        print("----- End Raw Sample -----")
+                    print("=== End of raw LLM response(s) ===\n")
 
-                for idx, sample in enumerate(all_samples, start=1):
-                    print(f"\n----- Sample #{idx} (lines={len(sample.splitlines())}) -----")
-                    print(sample)
-                    print("----- End Sample -----")
-                print("=== End of raw LLM response(s) ===\n")
-
-                # trim equation program skeleton body from samples
+                # Trim equation program skeleton body from samples.
                 if self._trim:
                     all_samples = [_extract_body(sample, config) for sample in all_samples]
-
-                # print("\n================ TRIMMED CODE SAMPLES ==============")
-                # for i, sample in enumerate(all_samples):
-                #     print(f"\n--- Sample {i+1} ---\n{sample}")
-                # print("====================================================\n")
-
-                # Parameter distribution inference (for local LLM only)
-                if config.use_api == False:
-                    from llmode import param_utils
-                    import json
-
-                    self._param_inference_results = []
-
-                    for i, raw_response in enumerate(raw_responses):
-                        try:
-                            print(f"\n============ PARAMETER INFERENCE (sample {i + 1}) ==============")
-                            # Extract just the function from the raw response
-                            function_code = param_utils.extract_function_from_response(raw_response, 'system')
-                            # print(f"[Extracted Function]\n{function_code}\n")
-
-                            # Build prompt
-                            param_prompt = param_utils.build_param_inference_prompt(
-                                system_code=function_code,
-                                spec_template_path='specs_parameters/spec_parameters_aki.txt',
-                                function_name='system'
-                            )
-                            # print("[Generated Prompt for Parameter Inference]")
-                            # print(param_prompt + "\n")
-
-                            # Send to dedicated parameter-inference LLM
-                            # print("[Sending to parameter-inference LLM...]")
-                            param_response = self._do_param_request(param_prompt)
-
-                            # print("\n[Raw LLM Response for Parameters]")
-                            # print(param_response if isinstance(param_response, str) else param_response[0])
-                            # raw_param_text = param_response if isinstance(param_response, str) else param_response[0]
-
-                            # print("\n=== Raw LLM response for parameters ===")
-                            # print(f"----- Param Sample #{i + 1} (lines={len(raw_param_text.splitlines())}) -----")
-                            # print(raw_param_text)
-                            # print("----- End Param Sample -----")
-                            # print("=== End of raw parameter response ===\n")
-
-
-                            # Extract JSON
-                            param_json_str = param_response if isinstance(param_response, str) else param_response[0]
-                            param_distributions = param_utils.extract_json_from_llm_output(param_json_str)
-                            # Enforce that every parameter entry has numeric
-                            # mean/sd; if this fails, fall back to defaults.
-                            param_distributions = param_utils.validate_param_distributions_format(param_distributions)
-
-                            print("\n[Extracted Parameter Distributions JSON]")
-                            print(json.dumps(param_distributions, indent=2))
-                            print("====================================================\n")
-
-                            self._param_inference_results.append(param_distributions)
-
-                        except Exception as e:
-                            # If anything goes wrong (connection error, bad JSON, etc.),
-                            # fall back to problem-level default priors; the evaluator
-                            # will fill these in so scoring can proceed.
-                            print(f"[Parameter inference failed for sample {i + 1}: {e}]\n")
-                            self._param_inference_results.append(None)
 
                 return all_samples
             except Exception as e:
@@ -369,16 +327,95 @@ class LocalLLM(LLM):
                 continue
 
 
+    def _run_param_inference(self, raw_responses, config: config_lib.Config) -> None:
+        """Run parameter distribution inference using the second engine.
+
+        - Local mode (`use_api == False`): uses the local parameter LLM server.
+        - API mode (`use_api == True`): uses the OpenAI Chat Completions API.
+        """
+        from llmode import param_utils
+        import json
+
+        self._param_inference_results = []
+
+        for i, raw_response in enumerate(raw_responses):
+            try:
+                # Debug: parameter-inference header per sample.
+                if DEBUG_PRINTS:
+                    print(f"\n============ PARAMETER INFERENCE (sample {i + 1}) ==============")
+                    # print("[Raw ODE LLM response used for parameters]")
+                    # print(raw_response)
+
+                # Extract just the function from the raw response
+                function_code = param_utils.extract_function_from_response(raw_response, 'system')
+                # Debug: extracted system() function passed to parameter LLM.
+                # print("[Extracted system() function for parameter inference]")
+                # print(function_code)
+
+                # Build prompt
+                param_prompt = param_utils.build_param_inference_prompt(
+                    system_code=function_code,
+                    spec_template_path='specs_parameters/spec_parameters_aki.txt',
+                    function_name='system'
+                )
+                # Debug: full initial parameter-inference prompt.
+                if DEBUG_PRINTS:
+                    print("[Generated Prompt for Initial Parameter Inference]")
+                    print(param_prompt)
+
+                # Send to dedicated parameter-inference LLM
+                if config.use_api:
+                    param_response = self._do_param_request_api(param_prompt, config)
+                else:
+                    param_response = self._do_param_request(param_prompt)
+
+                # Debug: raw parameter LLM response.
+                if DEBUG_PRINTS:
+                    print("\n[Raw LLM Response for Parameters]")
+                    print(param_response if isinstance(param_response, str) else param_response[0])
+
+                # Extract JSON
+                param_json_str = param_response if isinstance(param_response, str) else param_response[0]
+                param_distributions = param_utils.extract_json_from_llm_output(param_json_str)
+                # Enforce that every parameter entry has numeric mean/sd; if this
+                # fails, fall back to defaults.
+                param_distributions = param_utils.validate_param_distributions_format(param_distributions)
+
+                # Debug: pretty-print extracted parameter distributions JSON.
+                # print("\n[Extracted Parameter Distributions JSON]")
+                # print(json.dumps(param_distributions, indent=2))
+                # print("====================================================\n")
+
+                self._param_inference_results.append(param_distributions)
+
+            except Exception as e:
+                # If anything goes wrong (connection error, bad JSON, etc.),
+                # fall back to problem-level default priors; the evaluator will
+                # fill these in so scoring can proceed.
+                print(f"[Parameter inference failed for sample {i + 1}: {e}]\n")
+                self._param_inference_results.append(None)
+
+
     def _draw_samples_api(self, prompt: str, config: config_lib.Config) -> Collection[str]:
         all_samples = []
+
         prompt = '\n'.join([self._instruction_prompt, prompt])
+
+        host, path, headers = self._get_api_endpoint_and_headers(config)
+
+        # Debug: prompt sent to the ODE API model.
+        if DEBUG_PRINTS:
+            print("=== Prompt being sent to API LLM ===")
+            print(prompt)
+            print("=== End of prompt ===")
         
         for _ in range(self._samples_per_prompt):
             while True:
                 try:
-                    conn = http.client.HTTPSConnection("api.openai.com")
+                    conn = http.client.HTTPSConnection(host)
                     payload = json.dumps({
-                        "max_tokens": 512,
+                        # Allow longer completions so ODE systems are not truncated.
+                        "max_tokens": 8192, # 3072,
                         "model": config.api_model,
                         "messages": [
                             {
@@ -387,20 +424,27 @@ class LocalLLM(LLM):
                             }
                         ]
                     })
-                    headers = {
-                        'Authorization': f"Bearer {os.environ['API_KEY']}",
-                        'User-Agent': 'Apifox/1.0.0 (https://apifox.com)',
-                        'Content-Type': 'application/json'
-                    }
-                    conn.request("POST", "/v1/chat/completions", payload, headers)
+                    conn.request("POST", path, payload, headers)
                     res = conn.getresponse()
                     data = json.loads(res.read().decode("utf-8"))
                     response = data['choices'][0]['message']['content']
+                    # Debug: raw API ODE response before trimming.
+                    if DEBUG_PRINTS:
+                        print("\n----- Raw API ODE Response -----")
+                        print(response)
+                        print("----- End Raw API ODE Response -----\n")
                     
                     if self._trim:
-                        response = _extract_body(response, config)
-                    
-                    all_samples.append(response)
+                        body = _extract_body(response, config)
+                    else:
+                        body = response
+
+                    all_samples.append(body)
+
+                    # Debug: trimmed ODE body from API response.
+                    # print("\n----- Trimmed ODE Body (API) -----")
+                    # print(body)
+                    # print("----- End Trimmed ODE Body (API) -----\n")
                     break
 
                 except Exception as e:
@@ -408,7 +452,7 @@ class LocalLLM(LLM):
                     print(f"[LocalLLM] Error during API sampling: {e}. Retrying in 5 seconds...")
                     time.sleep(30)
                     continue
-        
+
         return all_samples
     
     
@@ -464,6 +508,33 @@ class LocalLLM(LLM):
         if response.status_code == 200:
             response = response.json()["content"]
             return response if self._batch_inference else response[0]
+
+    def _do_param_request_api(self, content: str, config: config_lib.Config) -> str:
+        """Send a parameter-inference prompt via the configured chat-completions API."""
+        while True:
+            try:
+                host, path, headers = self._get_api_endpoint_and_headers(config)
+                conn = http.client.HTTPSConnection(host)
+                payload = json.dumps({
+                    # Allow longer completions for parameter JSON.
+                    "max_tokens": 8192, # 3072,
+                    "model": config.api_model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": content
+                        }
+                    ]
+                })
+                conn.request("POST", path, payload, headers)
+                res = conn.getresponse()
+                data = json.loads(res.read().decode("utf-8"))
+                response = data['choices'][0]['message']['content']
+                return response
+            except Exception as e:
+                print(f"[LocalLLM] Error during API parameter inference: {e}. Retrying in 30 seconds...")
+                time.sleep(30)
+                continue
 
     def get_param_distributions_for_sample(self, index: int):
         """Return cached parameter distributions for a given sample index, if available."""

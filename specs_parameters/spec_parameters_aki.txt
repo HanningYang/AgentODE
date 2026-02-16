@@ -1,32 +1,28 @@
 You are an expert in biostatistics, nephrology, and mechanistic disease modelling.
-Your task is to propose and justify moderately informative physiological priors (linear-space mean and SD) for the parameters of a mechanistic ODE model describing Creatinine, BUN, and Potassium trajectories during AKI in adults aged 50–64 over the first 7 days after hospital admission.
-
-Instructions:
-1. Infer each parameter’s physiological meaning based on AKI pathophysiology, biomarker kinetics, and mechanistic ODE principles, infer each parameter’s physiological meaning.
-
-2. Use qualitative AKI physiology to define plausible 7-day behavior under typical inpatient care, assuming no catastrophic deterioration and some stabilization or early recovery.
-
-3. Provide moderately informative physiological priors (linear-space summaries)
-For each parameter:
-Provide a mean and standard deviation in physiological units (not distributions; these will later be lognormal).
-
-4. Internally check that the proposed priors would yield physiologically plausible 7-day trajectories
-
-5. Output only:
-(1) a brief explanation of reasoning
-(2) a JSON object where the keys are parameter indices.
-Each parameter entry must include: "mean", "sd", and "rationale" (1 sentence).
-
-Additional constraints:
-• Critically, all parameters must be calibrated for an hourly timescale (t in hours)
-• For any parameter involved in feedback, coupling, or multiplicative modulation, choose values such that its effect remains order-one and does not amplify or suppress terms by more than a few-fold over plausible state ranges.
-• For any parameter multiplying a state variable, ensure the implied time scale (≈ 1 / parameter) is compatible with the modeled time horizon and not extreme.
+Your task is to propose and justify moderately informative physiological priors (linear-space mean and SD) for the parameters of a mechanistic ODE model describing Creatinine, BUN, and Potassium trajectories for acute kidney injury (AKI) over the first 7 days after hospital admission.
+"Moderately informative" means: the prior should rule out physiologically implausible values but remain broad enough to accommodate substantial inter-patient variability.
 
 ODE System 
 Biomarkers:
 Creatinine (mg/dL) – Indicator of renal filtration function
 BUN – Blood Urea Nitrogen (mg/dL) – Accumulates when renal clearance fails
 Potassium (mmol/L) – Reflects renal electrolyte regulation and impaired excretion
+
+
+
+Instructions
+1. Infer each parameter's physiological meaning from the ODE structure 
+   and AKI pathophysiology.
+2. All parameters must be calibrated for an hourly timescale (t in hours).
+3. For parameters multiplying a state variable, ensure the implied 
+   timescale (≈ 1/parameter) is compatible with the 168-hour horizon.
+4. For coupling or modulation parameters, ensure the term magnitude 
+   stays within ~0.1–10x of the dominant terms over plausible state ranges.
+5. Propose a mean and SD in linear space (not log space).
+6. Output only:
+(1) a brief explanation of reasoning
+(2) a JSON object where the keys are parameter indices.
+Each parameter entry must include: "mean", "sd", and "rationale" (1 sentence).
 
 JSON Output Format (strictly)
 {
@@ -35,8 +31,6 @@ JSON Output Format (strictly)
     "2": { "mean": ..., "sd": ..., "rationale": "..." },
     ...
 }
-
-Do not include anything else.
 
 
 

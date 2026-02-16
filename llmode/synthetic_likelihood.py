@@ -24,7 +24,7 @@ from scipy.stats import spearmanr
 
 
 N_PATIENTS_DEFAULT = 100
-N_SIMULATIONS_DEFAULT = 100
+N_SIMULATIONS_DEFAULT = 150
 REGULARIZATION_DEFAULT = 1e-6
 
 
@@ -338,6 +338,229 @@ def get_stat_names(biomarker_cols: List[str]) -> List[str]:
     return names
 
 
+def _human_readable_stat_label(stat_name: str, biomarker_names: List[str]) -> str:
+    """Map internal stat name to a human-readable label with biomarker context."""
+    # Per-biomarker stats: "<bio>_<kind>"
+    for bio in biomarker_names:
+        prefix = f"{bio}_"
+        if stat_name.startswith(prefix):
+            kind = stat_name[len(prefix):]
+            if kind == "std_quantile_deg0":
+                label = "Baseline / intercept ↔ quantile deg0 (location)" # "Baseline Level (Intercept)"
+            elif kind == "std_quantile_deg1":
+                label = "Spread / variability ↔ marginal quantile slope (deg1) / dispersion" # "Spread / Variability"
+            elif kind == "lag1_autocorr":
+                label = "Temporal smoothness ↔ lag-1 Spearman autocorr" # "Temporal Smoothness"
+            elif kind == "pop_trend_spearman":
+                label = "Population drift ↔ time–mean Spearman trend" # "Overall Population Drift"
+            else:
+                label = kind
+            return f"{bio}: {label}"
+
+    # Cross-biomarker dynamics: "diff_corr_{b1}_{b2}" where b1/b2 are prefixes.
+    if stat_name.startswith("diff_corr_"):
+        parts = stat_name.split("_")
+        if len(parts) == 4:
+            _, _, p1, p2 = parts
+            prefix_map = {bio[:2]: bio for bio in biomarker_names}
+            bio1 = prefix_map.get(p1, p1)
+            bio2 = prefix_map.get(p2, p2)
+            return f"{bio1} - {bio2}: Dynamic coupling ↔ first-difference cross-biomarker Spearman"
+
+    return stat_name
+
+
+def generate_llm_feedback(
+    log_likelihood: float,
+    s_obs: np.ndarray,
+    details: Dict[str, np.ndarray],
+    stat_names: List[str],
+    biomarker_names: List[str],
+) -> str:
+    """Generate aggregated feedback string for guiding LLM optimization."""
+
+    mu_hat = details['mu_hat']
+    sigma_hat = details['sigma_hat']
+    per_stat_contrib = details['per_stat_contrib']
+    residual = details['residual']
+    sim_std = np.sqrt(np.diag(sigma_hat))  # Simulation std per stat
+
+    # ========================================
+    # 1. Per-Biomarker Summary
+    # ========================================
+    biomarker_summary: Dict[str, Dict[str, float | str]] = {}
+
+    for bio in biomarker_names:
+        marginal_idx = [
+            i for i, n in enumerate(stat_names)
+            if n.startswith(f"{bio}_") and ('std_quantile_deg0' in n or 'std_quantile_deg1' in n)
+        ]
+        temporal_idx = [
+            i for i, n in enumerate(stat_names)
+            if n.startswith(f"{bio}_") and ('lag1_autocorr' in n or 'pop_trend_spearman' in n)
+        ]
+
+        marginal_contrib = float(sum(per_stat_contrib[i] for i in marginal_idx)) if marginal_idx else 0.0
+        temporal_contrib = float(sum(per_stat_contrib[i] for i in temporal_idx)) if temporal_idx else 0.0
+        total = marginal_contrib + temporal_contrib
+
+        biomarker_summary[bio] = {
+            'marginal': marginal_contrib,
+            'temporal': temporal_contrib,
+            'total': total,
+        }
+
+    # Assign priority (more negative total -> higher priority).
+    sorted_bios = sorted(biomarker_summary.items(), key=lambda x: x[1]['total'])
+    for rank, (bio, _) in enumerate(sorted_bios):
+        if rank == 0:
+            biomarker_summary[bio]['priority'] = 'Critical'
+        elif rank == 1:
+            biomarker_summary[bio]['priority'] = 'High'
+        else:
+            biomarker_summary[bio]['priority'] = 'Medium'
+
+    # ========================================
+    # 2. Cross-Biomarker Dynamics
+    # ========================================
+    corr_stats = []
+    prefix_map = {bio[:2]: bio for bio in biomarker_names}
+    for i, name in enumerate(stat_names):
+        if name.startswith("diff_corr_"):
+            parts = name.split("_")
+            if len(parts) == 4:
+                _, _, p1, p2 = parts
+                bio1 = prefix_map.get(p1, p1)
+                bio2 = prefix_map.get(p2, p2)
+                pair_label = f"{bio1} - {bio2}"
+            else:
+                pair_label = name
+
+            corr_stats.append({
+                'pair': pair_label,
+                'name': name,
+                'observed': float(s_obs[i]),
+                'simulated': float(mu_hat[i]),
+                'sim_std': float(sim_std[i]),
+                'contribution': float(per_stat_contrib[i]),
+                'gap': float(mu_hat[i] - s_obs[i]),
+            })
+
+    # ========================================
+    # 3. Top Problems (sorted by contribution)
+    # ========================================
+    # problems = []
+    # for i, name in enumerate(stat_names):
+    #     gap = float(mu_hat[i] - s_obs[i])
+
+    #     if 'std_quantile_deg0' in name:
+    #         direction = "values too HIGH" if gap > 0 else "values too LOW"
+    #     elif 'std_quantile_deg1' in name:
+    #         direction = "spread too WIDE" if gap > 0 else "spread too NARROW"
+    #     elif 'lag1_autocorr' in name:
+    #         direction = "too persistent" if gap > 0 else "too variable"
+    #     elif 'pop_trend_spearman' in name:
+    #         direction = "trend too strong" if gap > 0 else "trend too weak"
+    #     elif 'diff_corr' in name:
+    #         direction = "too coupled" if gap > 0 else "too independent"
+    #     else:
+    #         direction = "mismatch"
+
+    problems = []
+    for i, name in enumerate(stat_names):
+        obs = float(s_obs[i])
+        sim = float(mu_hat[i])
+        gap = sim - obs  # simulated - observed
+
+        if 'std_quantile_deg0' in name:
+            # Location shift of standardized marginal distribution
+            direction = "values too HIGH" if gap > 0 else "values too LOW"
+
+        elif 'std_quantile_deg1' in name:
+            # Slope/scale of quantile function ~ dispersion of standardized values
+            direction = "spread too WIDE" if gap > 0 else "spread too NARROW"
+
+        elif 'lag1_autocorr' in name:
+            # Higher lag-1 => more persistence/smoothness
+            direction = "too persistent" if gap > 0 else "too variable"
+
+        elif 'pop_trend_spearman' in name:
+            # Option A: compare magnitude for "strength" and track sign mismatch
+            # Use a small threshold to avoid overreacting to near-zero observed trends
+            if np.sign(sim) != np.sign(obs) and abs(obs) > 0.10:
+                direction = "wrong direction"
+            elif abs(sim) > abs(obs):
+                direction = "trend too strong"
+            else:
+                direction = "trend too weak"
+
+        elif 'diff_corr' in name:
+            # Cross-biomarker dynamic coupling via first-difference correlation
+            # If sign flips (and observed isn't near zero), call it out explicitly
+            if np.sign(sim) != np.sign(obs) and abs(obs) > 0.10:
+                direction = "coupling sign mismatch"
+            elif abs(sim) > abs(obs):
+                direction = "too coupled"
+            else:
+                direction = "too independent"
+
+        else:
+            direction = "mismatch"
+
+
+        readable_name = _human_readable_stat_label(name, biomarker_names)
+
+        problems.append({
+            'name': readable_name,
+            'observed': float(s_obs[i]),
+            'simulated': float(mu_hat[i]),
+            'sim_std': float(sim_std[i]),
+            'contribution': float(per_stat_contrib[i]),
+            'direction': direction,
+        })
+
+    problems.sort(key=lambda x: x['contribution'])
+
+    # ========================================
+    # 4. Format Output
+    # ========================================
+    output_lines: List[str] = []
+    output_lines.append(f"## Evaluation Score: {log_likelihood:.2f} (higher is better)\n")
+
+    # Per-biomarker table (disabled for now; kept for future use).
+    # output_lines.append("## Per-Biomarker Summary:\n")
+    # output_lines.append("| Biomarker | Marginal | Temporal | Total | Priority |")
+    # output_lines.append("|-----------|----------|----------|-------|----------|")
+    # for bio in biomarker_names:
+    #     data = biomarker_summary[bio]
+    #     output_lines.append(
+    #         f\"| {bio} | {data['marginal']:.1f} | {data['temporal']:.1f} | "
+    #         f\"{data['total']:.1f} | {data['priority']} |\"
+    #     )
+
+    # Cross-biomarker table (disabled for now; kept for future use).
+    # output_lines.append("\n## Cross-Biomarker Dynamics (spearman correlation):")
+    # output_lines.append("| Pair | Observed | Simulated | Sim Std | Contribution | Gap |")
+    # output_lines.append("|------|----------|-----------|---------|--------------|-----|")
+    # for cs in corr_stats:
+    #     output_lines.append(
+    #         f\"| {cs['pair']} | {cs['observed']:.3f} | {cs['simulated']:.3f} | "
+    #         f\"{cs['sim_std']:.3f} | {cs['contribution']:.2f} | {cs['gap']:+.3f} |\"
+    #     )
+
+    # Top 5 problems
+    output_lines.append("\n## Top 5 Problems:")
+    for i, prob in enumerate(problems[:5]):
+        output_lines.append(f"{i+1}. **{prob['name']}**: {prob['direction']}")
+        output_lines.append(
+            f"   - Observed: {prob['observed']:.3f}, "
+            f"Simulated: {prob['simulated']:.3f} (±{prob['sim_std']:.3f})"
+        )
+        output_lines.append(f"   - Contribution: {prob['contribution']:.2f}")
+
+    return "\n".join(output_lines) + "\n"
+
+
 class LogSyntheticLikelihood:
     """Wood's synthetic likelihood for ODE-based simulators.
 
@@ -467,22 +690,14 @@ class _PhysioRejection(Exception):
         self.valid_fraction = float(valid_fraction)
 
 
-def evaluate_system_logsl(
+def _evaluate_system_logsl_core(
     system_func: Callable[[np.ndarray, np.ndarray], np.ndarray],
     problem_name: str,
     param_distributions: Dict[str, Dict[str, float]] | None,
     verbose: bool = False,
     sample_order: int | None = None,
-) -> float | None:
-    """Evaluate a system function via log synthetic likelihood for a given problem.
-
-    This helper wires together:
-      - initial-condition generation from the problem's IC config,
-      - observed data loading from `data/{problem_name}/{problem_name}.csv`,
-      - parameter sampling from LLM-inferred priors when available,
-      - ODE simulation using `ode_simulator.simulate_ode_system`,
-      - synthetic likelihood computation against observed summary statistics.
-    """
+) -> Tuple[float | None, Dict[str, np.ndarray] | None, np.ndarray | None, List[str] | None, List[str] | None]:
+    """Core synthetic-likelihood evaluation returning diagnostics alongside score."""
     from llmode import initial_condition_utils
     from llmode import ode_simulator
     from llmode import param_utils
@@ -490,6 +705,8 @@ def evaluate_system_logsl(
     # Load configuration and observed data.
     config = initial_condition_utils.load_ic_config(problem_name)
     biomarker_names = initial_condition_utils.get_observed_biomarker_order(config)
+    # Full biomarker order used for initial conditions / simulation.
+    all_biomarker_names = initial_condition_utils.get_biomarker_order(config)
     t_eval = initial_condition_utils.get_time_grid(config)
 
     observed_data_path = f'data/{problem_name}/{problem_name}.csv'
@@ -510,7 +727,7 @@ def evaluate_system_logsl(
     # If no parameter distributions are available, we cannot form a meaningful
     # synthetic likelihood; treat this as unevaluable.
     if param_distributions is None:
-        return None
+        return None, None, None, None, None
 
     def param_sampler(n: int) -> np.ndarray:
         return param_utils.sample_params_from_distributions(
@@ -544,7 +761,7 @@ def evaluate_system_logsl(
             check_nans=True,
         )
         valid_fraction = float(valid_mask.sum()) / float(valid_mask.size)
-        if valid_fraction < 0.8:
+        if valid_fraction < 0.7:
             # For the very first template/system (sample_order == 0), allow a
             # more permissive evaluation so that we always obtain an initial
             # baseline score, even if many trajectories are invalid.
@@ -552,10 +769,20 @@ def evaluate_system_logsl(
             if sample_order not in (0, None):
                 # Signal to the outer evaluator that this system should be rejected.
                 raise _PhysioRejection(valid_fraction)
+        # Map observed biomarker names to their indices in the full config
+        # order so we can always return trajectories whose biomarker dimension
+        # matches `biomarker_names`, even if all trajectories are invalid.
+        observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
+
         if not np.any(valid_mask):
-            # Should be caught by the 0.8 threshold above, but keep a fallback.
-            return trajectories[valid_mask]
-        return trajectories[valid_mask]
+            # No valid trajectories: return an empty array with the correct
+            # biomarker dimension so downstream summary-stat routines do not
+            # see a mismatch between n_bio and len(biomarker_names).
+            empty = trajectories[valid_mask][..., observed_indices]
+            return empty
+
+        # Restrict trajectories to valid patients and observed biomarkers.
+        return trajectories[valid_mask][..., observed_indices]
 
     log_sl = LogSyntheticLikelihood(
         s_obs=s_obs,
@@ -577,9 +804,9 @@ def evaluate_system_logsl(
             f"{prefix}System rejected: only {e.valid_fraction:.3f} of trajectories "
             "fall within physiological normal ranges."
         )
-        return None
+        return None, None, None, None, None
     if not np.isfinite(log_likelihood):
-        return None
+        return None, None, None, None, None
 
     if verbose:
         # Optional diagnostics: print variance of each summary statistic under
@@ -592,5 +819,50 @@ def evaluate_system_logsl(
             for name, var in zip(stat_names, variances):
                 print(f"  {name:<40} {var:12.6g}")
             print()
+    return float(log_likelihood), details, s_obs, stat_names, biomarker_names
 
-    return float(log_likelihood)
+
+def evaluate_system_logsl(
+    system_func: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    problem_name: str,
+    param_distributions: Dict[str, Dict[str, float]] | None,
+    verbose: bool = False,
+    sample_order: int | None = None,
+) -> float | None:
+    """Evaluate a system function via log synthetic likelihood for a given problem."""
+    score, _details, _s_obs, _names, _bios = _evaluate_system_logsl_core(
+        system_func=system_func,
+        problem_name=problem_name,
+        param_distributions=param_distributions,
+        verbose=verbose,
+        sample_order=sample_order,
+    )
+    return score
+
+
+def evaluate_system_logsl_with_feedback(
+    system_func: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    problem_name: str,
+    param_distributions: Dict[str, Dict[str, float]] | None,
+    verbose: bool = False,
+    sample_order: int | None = None,
+) -> Tuple[float | None, str | None]:
+    """Evaluate system and return (score, feedback) for LLM-guided optimization."""
+    score, details, s_obs, stat_names, biomarker_names = _evaluate_system_logsl_core(
+        system_func=system_func,
+        problem_name=problem_name,
+        param_distributions=param_distributions,
+        verbose=verbose,
+        sample_order=sample_order,
+    )
+    if score is None or details is None or s_obs is None or stat_names is None or biomarker_names is None:
+        return None, None
+
+    feedback = generate_llm_feedback(
+        log_likelihood=score,
+        s_obs=s_obs,
+        details=details,
+        stat_names=stat_names,
+        biomarker_names=biomarker_names,
+    )
+    return score, feedback

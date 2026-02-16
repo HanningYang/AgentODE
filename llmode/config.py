@@ -37,8 +37,8 @@ class ExperienceBufferConfig:
         cluster_sampling_temperature_period (int): Period for temperature decay
     """
     functions_per_prompt: int = 2 
-    num_islands: int = 10 
-    reset_period: int = 4 * 60 * 60
+    num_islands: int = 5 # 10 
+    reset_period: int = 3 * 4 * 4 * 60 * 60
     cluster_sampling_temperature_init: float = 0.8 # 0.1
     cluster_sampling_temperature_period: int = 30_000
 
@@ -54,6 +54,11 @@ class Config:
        samples_per_prompt (int): Number of hypotheses per prompt
        evaluate_timeout_seconds (int): Hypothesis evaluation timeout
        use_api (bool): API usage flag
+       api_model (str): Model name for remote APIs
+       api_provider (str): Which API provider to use ('openai' or 'deepseek')
+       param_optim_steps (int): Maximum number of parameter-optimization queries per ODE structure
+       param_optim_patience (int): Patience for early stopping; stop if relative logSL improvement or null-score streak exceeds this.
+       param_optim_rel_improvement (float): Minimum relative improvement in logSL required to reset patience (e.g. 0.1 for 10%).
    """
     experience_buffer: ExperienceBufferConfig = dataclasses.field(default_factory=ExperienceBufferConfig)
     num_samplers: int = 1 
@@ -62,6 +67,10 @@ class Config:
     evaluate_timeout_seconds: int = 30  
     use_api: bool = False
     api_model: str = "gpt-3.5-turbo"
+    api_provider: str = "openai"
+    param_optim_steps: int = 10
+    param_optim_patience: int = 3
+    param_optim_rel_improvement: float = 0.1
 
 
 @dataclasses.dataclass()

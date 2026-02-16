@@ -124,9 +124,11 @@ def main(
         version_generated=None,
         profiler=profiler,
         problem_name=problem_name,
-        global_sample_nums=0,
-        sample_time=None,
+         config=config,
+         global_sample_nums=0,
+         sample_time=None,
         param_distributions=founder_param_dists,
+        enable_param_optim=False,
     )
     
     # Set global max sample nums.
