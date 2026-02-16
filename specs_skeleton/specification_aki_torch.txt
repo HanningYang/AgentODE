@@ -1,0 +1,90 @@
+"""
+Find the symbolic skeleton of an ODE system that represents Acute Kidney Injury (AKI)
+progression in middle-aged patients (50–64 years old) during the first 168 hours 
+(7 days) after hospital admission. The system should incorporate biologically 
+plausible interactions among the following biomarkers:
+
+    - Creatinine (mg/dL): Indicator of renal filtration function
+    - BUN – Blood Urea Nitrogen (mg/dL): Accumulates when renal clearance fails
+    - Potassium (mmol/L): Reflects renal electrolyte regulation and impaired excretion
+
+The time units is in hours.
+"""
+
+import torch
+
+# Initialize parameters
+MAX_NPARAMS = 25
+params = torch.ones(MAX_NPARAMS)
+
+
+@system.evolve
+def system(biomarkers: torch.Tensor, params: torch.Tensor, t: float) -> torch.Tensor:
+    """Symbolic skeleton for a 3-variable AKI ODE system.
+    Args:
+        biomarkers: A torch tensor containing
+            [Creatinine, BUN, Potassium].
+        params: Array of numeric constants or parameters to be optimized.
+                You must not use any params[k] with k >= MAX_NPARAMS
+    Returns:
+        A torch tensor representing the temporal derivatives (d/dt)
+        of the biomarkers.
+    """
+    # Support both shape (3,) and (batch, 3) by indexing last dim.
+    Cr = biomarkers[..., 0]
+    BUN = biomarkers[..., 1]
+    K = biomarkers[..., 2]
+
+    # ---- Latent renal recovery capacity R(t) in (0,1] ----
+    # R(t) = R_min + (R_max - R_min) * (1 - exp(-k_rec * t))
+    # Interprets net improvement in effective clearance (hemodynamics + tubular recovery + care).
+    R_min = params[..., 0]   # minimal effective clearance fraction at t=0 (>=0)
+    R_max = params[..., 1]   # asymptotic recovery fraction (<=1 typically)
+    k_rec = params[..., 2]   # recovery rate (1/hour)
+    R = R_min + (R_max - R_min) * (1.0 - torch.exp(-k_rec * t))
+    R = torch.clamp(R, 0.0, 1.5)  # allow mild >1 if desired by optimizer; clip to keep stable
+    # ---- Creatinine dynamics ----
+    # Production + renal clearance that strengthens with recovery + small nonrenal clearance.
+    p_Cr   = params[..., 3]   # creatinine production rate (mg/dL/hour)
+    k_CrR  = params[..., 4]   # renal clearance coefficient (1/hour) multiplied by R
+    k_CrNR = params[..., 5]   # nonrenal/other clearance (1/hour), small
+    Cr_ref = params[..., 6]   # reference/normal creatinine (mg/dL) toward which clearance relaxes
+    # Use relaxation-to-reference so that when R improves Cr is pulled toward Cr_ref.
+    dCr = (
+        p_Cr
+        - (k_CrNR + k_CrR * R) * (Cr - Cr_ref)
+    )
+    # ---- BUN dynamics ----
+    # Production (catabolism/protein load) + renal clearance coupled to R + minor extrarenal loss.
+    p_BUN   = params[..., 7]   # BUN production rate (mg/dL/hour)
+    k_BUNR  = params[..., 8]   # renal clearance coefficient (1/hour) multiplied by R
+    k_BUNNR = params[..., 9]   # nonrenal clearance (1/hour)
+    BUN_ref = params[..., 10]  # reference/normal BUN (mg/dL)
+    dBUN = (
+        p_BUN
+        - (k_BUNNR + k_BUNR * R) * (BUN - BUN_ref)
+    )
+    # ---- Potassium dynamics ----
+    # (i) Extrarenal buffering/uptake pulls toward K_ref (insulin/catecholamines/etc. lumped).
+    # (ii) Renal excretion strengthens with R.
+    # (iii) Retention/shift sources stronger when R is low; optionally depends on severity (Cr/BUN).
+    K_ref   = params[..., 11]  # normal potassium setpoint (mmol/L)
+    k_Kbuf  = params[..., 12]  # extrarenal buffering/uptake rate (1/hour)
+    k_KR    = params[..., 13]  # renal excretion coefficient (1/hour) multiplied by R
+    # Retention / net positive K load when renal function is poor (e.g., tissue breakdown, acidosis)
+    s_K0    = params[..., 14]  # baseline retention/shift source (mmol/L/hour) scaled by (1-R)
+    s_Kcr   = params[..., 15]  # severity coupling to creatinine (mmol/L/hour per mg/dL)
+    s_Kbun  = params[..., 16]  # severity coupling to BUN (mmol/L/hour per mg/dL)
+    Cr_sev0 = params[..., 17]  # creatinine severity reference (mg/dL)
+    BUN_sev0= params[..., 18]  # BUN severity reference (mg/dL)
+    # Smooth severity term (nonnegative) so coupling only increases K when above reference
+    sev = torch.clamp(Cr - Cr_sev0, min=0.0) * s_Kcr + torch.clamp(BUN - BUN_sev0, min=0.0) * s_Kbun
+    # Total K derivative
+    dK = (
+        - k_Kbuf * (K - K_ref)                 # extrarenal buffering
+        - (k_KR * R) * (K - K_ref)             # renal excretion improves with recovery
+        + (1.0 - torch.clamp(R, 0.0, 1.0)) * s_K0  # retention stronger when kidney function is poor
+        + (1.0 - torch.clamp(R, 0.0, 1.0)) * sev   # severity-linked shifts stronger when R is low
+    )
+    d_biomarkers = torch.stack([dCr, dBUN, dK], dim=-1)
+    return d_biomarkers

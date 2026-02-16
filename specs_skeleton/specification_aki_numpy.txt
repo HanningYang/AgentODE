@@ -25,8 +25,7 @@ def system(biomarkers: np.ndarray, params: np.ndarray, t: float) -> np.ndarray:
         biomarkers: A numpy array containing
             [Creatinine, BUN, Potassium].
         params: Array of numeric constants or parameters to be optimized.
-                You must not use any params[k] with k >= MAX_NPARAMS;
-                using more than 20 parameters is invalid.
+                You must not use any params[k] with k >= MAX_NPARAMS
     Returns:
         A numpy array representing the temporal derivatives (d/dt)
         of the biomarkers.

@@ -151,7 +151,8 @@ def count_params_used(code: str, param_array_name: str = 'params') -> int:
     """Count the maximum parameter index used in code.
 
     Args:
-        code: Python code string containing parameter references (e.g., params[0], params[5])
+        code: Python code string containing parameter references
+              (e.g., params[0], params[5], params[..., 3])
         param_array_name: Name of the parameter array (default: 'params')
 
     Returns:
@@ -162,7 +163,13 @@ def count_params_used(code: str, param_array_name: str = 'params') -> int:
         >>> count_params_used(code)
         6
     """
-    pattern = rf'{param_array_name}\[(\d+)\]'
+    # Match both simple and batched indexing, e.g.:
+    #   params[0]
+    #   params[..., 3]
+    #   params[:, 2]
+    # We only care about the largest integer index that appears inside any
+    # bracket that follows `param_array_name`.
+    pattern = rf'{re.escape(param_array_name)}\[[^\]]*?(\d+)[^\]]*]'
     matches = re.findall(pattern, code)
     if not matches:
         return 0

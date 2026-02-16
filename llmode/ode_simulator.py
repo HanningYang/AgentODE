@@ -10,9 +10,11 @@ from scipy.integrate import odeint
 from typing import Callable, Dict, Optional, Tuple
 from llmode import initial_condition_utils
 from llmode import code_manipulation
+import torch
 
 
 _NUMERICAL_WARNING_PRINTED = False
+_TORCH_DEVICE_LOGGED = False
 
 
 def _silence_odeint_output():
@@ -40,6 +42,102 @@ def _silence_odeint_output():
             os.close(self._devnull_fd)
 
     return _Silencer()
+
+
+def _to_tensor(
+    x,
+    device: torch.device,
+    dtype: torch.dtype,
+):
+    """Convert NumPy or torch tensors to torch.Tensor on the given device."""
+    if isinstance(x, torch.Tensor):
+        return x.to(device=device, dtype=dtype)
+    return torch.as_tensor(x, device=device, dtype=dtype)
+
+
+def simulate_ode_system_torch(
+    system_func: Callable[..., torch.Tensor],
+    initial_conditions,
+    time_grid,
+    params,
+    device: torch.device | None = None,
+    dtype: torch.dtype = torch.float32,
+    method: str = "rk4",
+):
+    """Simulate an ODE system in torch for multiple initial conditions.
+
+    Args:
+        system_func: Callable with signature (state, params[, t]) -> derivatives,
+            where state has shape (batch, n_biomarkers) and params has shape
+            (batch, n_params) or (n_params,) broadcast to all samples.
+        initial_conditions: Array of shape (n_samples, n_biomarkers).
+        time_grid: 1D array of time points.
+        params: Either shape (n_params,) or (n_samples, n_params).
+        device: torch.device to place tensors on (CPU or CUDA).
+        dtype: Torch dtype for computation.
+        method: Currently only 'rk4' is implemented.
+
+    Returns:
+        trajectories: Tensor of shape (n_samples, n_timepoints, n_biomarkers).
+    """
+    global _TORCH_DEVICE_LOGGED
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if not _TORCH_DEVICE_LOGGED:
+        print(f"[torch ODE] using device: {device}")
+        _TORCH_DEVICE_LOGGED = True
+
+    t_grid = _to_tensor(time_grid, device, dtype).flatten()
+    y0 = _to_tensor(initial_conditions, device, dtype)
+    params_tensor = _to_tensor(params, device, dtype)
+
+    if params_tensor.ndim == 1:
+        params_tensor = params_tensor.unsqueeze(0).expand(y0.shape[0], -1)
+    elif params_tensor.ndim == 2 and params_tensor.shape[0] != y0.shape[0]:
+        raise ValueError(
+            f"params has shape {tuple(params_tensor.shape)}, but n_samples={y0.shape[0]}"
+        )
+
+    # Detect whether the provided system function expects an explicit time argument.
+    accepts_time = False
+    try:
+        sig = inspect.signature(system_func)
+        if len(sig.parameters) >= 3:
+            accepts_time = True
+    except (TypeError, ValueError):
+        accepts_time = False
+
+    n_steps = t_grid.shape[0]
+    n_samples, n_biomarkers = y0.shape
+
+    traj = torch.empty((n_samples, n_steps, n_biomarkers), device=device, dtype=dtype)
+    traj[:, 0] = y0
+
+    if method != "rk4":
+        raise ValueError(f"Unsupported method '{method}', only 'rk4' is implemented.")
+
+    y = y0
+    for i in range(1, n_steps):
+        t_prev = t_grid[i - 1]
+        t_curr = t_grid[i]
+        dt = (t_curr - t_prev).item()
+
+        if accepts_time:
+            k1 = system_func(y, params_tensor, t_prev)
+            k2 = system_func(y + 0.5 * dt * k1, params_tensor, t_prev + 0.5 * dt)
+            k3 = system_func(y + 0.5 * dt * k2, params_tensor, t_prev + 0.5 * dt)
+            k4 = system_func(y + dt * k3, params_tensor, t_curr)
+        else:
+            k1 = system_func(y, params_tensor)
+            k2 = system_func(y + 0.5 * dt * k1, params_tensor)
+            k3 = system_func(y + 0.5 * dt * k2, params_tensor)
+            k4 = system_func(y + dt * k3, params_tensor)
+
+        y = y + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+        traj[:, i] = y
+
+    return traj
 
 
 def simulate_ode_system(

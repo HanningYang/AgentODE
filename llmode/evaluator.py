@@ -392,6 +392,12 @@ class Evaluator:
         self._sandbox = sandbox_class()
         self._problem_name = problem_name
 
+    @staticmethod
+    def _is_torch_system(system_code: str) -> bool:
+        """Heuristic: detect whether the system implementation is torch-based."""
+        lowered = system_code.lower()
+        return ("import torch" in lowered) or ("torch." in lowered)
+
     def analyse(
             self,
             sample: str,
@@ -484,6 +490,8 @@ class Evaluator:
             except Exception:
                 system_code_str = ""
 
+            use_gpu_backend = self._is_torch_system(system_code_str)
+
             sample_order = getattr(new_function, 'global_sample_nums', None)
 
             config_obj = kwargs.get('config', None)
@@ -547,6 +555,7 @@ class Evaluator:
                     param_distributions=param_distributions,
                     verbose=False,
                     sample_order=sample_order,
+                    backend="gpu" if use_gpu_backend else "cpu",
                 )
                 print(
                     f"[Centralized evaluation] Sample {sample_order}: "
@@ -569,6 +578,7 @@ class Evaluator:
                             param_distributions=param_distributions,
                             verbose=False,
                             sample_order=sample_order,
+                            backend="gpu" if use_gpu_backend else "cpu",
                         )
                     except Exception as e:
                         print(
@@ -597,6 +607,7 @@ class Evaluator:
                     param_distributions=best_params,
                     verbose=False,
                     sample_order=sample_order,
+                    backend="gpu" if use_gpu_backend else "cpu",
                 )
                 init_eval_time = time.time() - t0
                 if score is None or not np.isfinite(score):
@@ -674,6 +685,7 @@ class Evaluator:
                         param_distributions=new_params,
                         verbose=False,
                         sample_order=sample_order,
+                        backend="gpu" if use_gpu_backend else "cpu",
                     )
                     step_eval_time = time.time() - t_step
 
@@ -787,6 +799,7 @@ class Evaluator:
                             param_distributions=param_distributions,
                             verbose=False,
                             sample_order=sample_order,
+                            backend="gpu" if use_gpu_backend else "cpu",
                         )
                     except Exception as e:
                         print(

@@ -19,8 +19,18 @@ from typing import Callable, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-
+from joblib import Parallel, delayed
 from scipy.stats import spearmanr
+
+from llmode.summary_stats import (
+    polynomial_quantile_stats_deg01,
+    compute_standardization_params,
+    standardize,
+    compute_summary_stats,
+    compute_summary_stats_from_df,
+    get_stat_names,
+    get_observed_summary,
+)
 
 
 N_PATIENTS_DEFAULT = 100
@@ -598,22 +608,30 @@ class LogSyntheticLikelihood:
         param_sampler: Callable[[int], np.ndarray],
         t_eval: np.ndarray,
         verbose: bool = True,
+        n_jobs: int = 1,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Run `n_simulations` simulations and estimate mu_hat and Sigma_hat."""
-        simulated_stats: List[np.ndarray] = []
-
-        for sim_idx in range(self.n_simulations):
+        def _one_sim(sim_idx: int) -> np.ndarray:
             if verbose and (sim_idx + 1) % 50 == 0:
                 print(f"  Simulation {sim_idx + 1}/{self.n_simulations}")
 
             trajectories = self.simulator(self.n_patients, param_sampler, t_eval)
-            s_sim = compute_summary_stats(
+            return compute_summary_stats(
                 trajectories,
                 t_eval,
                 self.biomarker_names,
                 self.std_params,
             )
-            simulated_stats.append(s_sim)
+
+        if n_jobs is None or n_jobs == 1:
+            simulated_stats: List[np.ndarray] = []
+            for sim_idx in range(self.n_simulations):
+                simulated_stats.append(_one_sim(sim_idx))
+        else:
+            simulated_stats = Parallel(n_jobs=n_jobs)(
+                delayed(_one_sim)(sim_idx)
+                for sim_idx in range(self.n_simulations)
+            )
 
         simulated_stats_arr = np.vstack(simulated_stats)
 
@@ -670,12 +688,14 @@ class LogSyntheticLikelihood:
         param_sampler: Callable[[int], np.ndarray],
         t_eval: np.ndarray,
         verbose: bool = True,
+        n_jobs: int = 1,
     ) -> Tuple[float, Dict[str, np.ndarray]]:
         """Full evaluation: run simulations and compute log-likelihood."""
         mu_hat, sigma_hat, sim_stats = self.run_simulations(
             param_sampler,
             t_eval,
-            verbose,
+            verbose=verbose,
+            n_jobs=n_jobs,
         )
         log_likelihood, details = self.compute_log_likelihood(mu_hat, sigma_hat)
         details['simulated_stats'] = sim_stats
@@ -696,33 +716,23 @@ def _evaluate_system_logsl_core(
     param_distributions: Dict[str, Dict[str, float]] | None,
     verbose: bool = False,
     sample_order: int | None = None,
+    backend: str = "cpu",
+    n_jobs: int = 1,
 ) -> Tuple[float | None, Dict[str, np.ndarray] | None, np.ndarray | None, List[str] | None, List[str] | None]:
     """Core synthetic-likelihood evaluation returning diagnostics alongside score."""
     from llmode import initial_condition_utils
     from llmode import ode_simulator
     from llmode import param_utils
 
-    # Load configuration and observed data.
-    config = initial_condition_utils.load_ic_config(problem_name)
-    biomarker_names = initial_condition_utils.get_observed_biomarker_order(config)
-    # Full biomarker order used for initial conditions / simulation.
-    all_biomarker_names = initial_condition_utils.get_biomarker_order(config)
-    t_eval = initial_condition_utils.get_time_grid(config)
-
-    observed_data_path = f'data/{problem_name}/{problem_name}.csv'
-    observed_df = pd.read_csv(observed_data_path)
-
-    # Standardization parameters and observed stats.
-    std_params = compute_standardization_params(observed_df, biomarker_names)
-    s_obs = compute_summary_stats_from_df(
-        observed_df,
-        biomarker_names,
-        std_params,
-        subject_col='subject_id',
-        episode_col='hadm_id',
-        time_col='hours_from_admission',
-    )
-    stat_names = get_stat_names(biomarker_names)
+    # Load configuration and observed data (cached per problem).
+    obs = get_observed_summary(problem_name)
+    config = obs["config"]
+    biomarker_names = obs["biomarker_names"]
+    all_biomarker_names = obs["all_biomarker_names"]
+    t_eval = obs["t_eval"]
+    std_params = obs["std_params"]
+    s_obs = obs["s_obs"]
+    stat_names = obs["stat_names"]
 
     # If no parameter distributions are available, we cannot form a meaningful
     # synthetic likelihood; treat this as unevaluable.
@@ -736,53 +746,100 @@ def _evaluate_system_logsl_core(
             distribution="lognormal",
         )
 
-    def simulator(
-        n_patients: int,
-        sampler_fn: Callable[[int], np.ndarray],
-        t_grid: np.ndarray,
-    ) -> np.ndarray:
-        ic_array, _ = initial_condition_utils.generate_initial_conditions(
-            config,
-            sample_size=n_patients,
-            random_seed=config.get('random_seed', None),
-        )
-        param_sets = sampler_fn(n_patients)
-        trajectories = ode_simulator.simulate_ode_system(
-            system_func=system_func,
-            initial_conditions=ic_array,
-            time_grid=t_grid,
-            params=param_sets,
-            method='odeint',
-        )
-        # Drop patients whose trajectories are numerically or physiologically invalid.
-        valid_mask, _issues = ode_simulator.check_trajectory_normal_range_validity(
-            trajectories,
-            config=config,
-            check_nans=True,
-        )
-        valid_fraction = float(valid_mask.sum()) / float(valid_mask.size)
-        if valid_fraction < 0.7:
-            # For the very first template/system (sample_order == 0), allow a
-            # more permissive evaluation so that we always obtain an initial
-            # baseline score, even if many trajectories are invalid.
-            # For all later samples, enforce the 0.8 threshold strictly.
-            if sample_order not in (0, None):
-                # Signal to the outer evaluator that this system should be rejected.
-                raise _PhysioRejection(valid_fraction)
-        # Map observed biomarker names to their indices in the full config
-        # order so we can always return trajectories whose biomarker dimension
-        # matches `biomarker_names`, even if all trajectories are invalid.
-        observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
+    # Choose simulator backend.
+    if backend == "gpu":
+        import torch
 
-        if not np.any(valid_mask):
-            # No valid trajectories: return an empty array with the correct
-            # biomarker dimension so downstream summary-stat routines do not
-            # see a mismatch between n_bio and len(biomarker_names).
-            empty = trajectories[valid_mask][..., observed_indices]
-            return empty
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Restrict trajectories to valid patients and observed biomarkers.
-        return trajectories[valid_mask][..., observed_indices]
+        def simulator(
+            n_patients: int,
+            sampler_fn: Callable[[int], np.ndarray],
+            t_grid: np.ndarray,
+        ) -> np.ndarray:
+            ic_array, _ = initial_condition_utils.generate_initial_conditions(
+                config,
+                sample_size=n_patients,
+                random_seed=config.get('random_seed', None),
+            )
+            param_sets = sampler_fn(n_patients)
+
+            traj_t = ode_simulator.simulate_ode_system_torch(
+                system_func=system_func,
+                initial_conditions=ic_array,
+                time_grid=t_grid,
+                params=param_sets,
+                device=device,
+                dtype=torch.float32,
+            )
+            trajectories = traj_t.detach().cpu().numpy()
+
+            # Drop patients whose trajectories are numerically or physiologically invalid.
+            valid_mask, _issues = ode_simulator.check_trajectory_normal_range_validity(
+                trajectories,
+                config=config,
+                check_nans=True,
+            )
+            valid_fraction = float(valid_mask.sum()) / float(valid_mask.size)
+            if valid_fraction < 0.7:
+                if sample_order not in (0, None):
+                    raise _PhysioRejection(valid_fraction)
+
+            observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
+
+            if not np.any(valid_mask):
+                empty = trajectories[valid_mask][..., observed_indices]
+                return empty
+
+            return trajectories[valid_mask][..., observed_indices]
+    else:
+        def simulator(
+            n_patients: int,
+            sampler_fn: Callable[[int], np.ndarray],
+            t_grid: np.ndarray,
+        ) -> np.ndarray:
+            ic_array, _ = initial_condition_utils.generate_initial_conditions(
+                config,
+                sample_size=n_patients,
+                random_seed=config.get('random_seed', None),
+            )
+            param_sets = sampler_fn(n_patients)
+            trajectories = ode_simulator.simulate_ode_system(
+                system_func=system_func,
+                initial_conditions=ic_array,
+                time_grid=t_grid,
+                params=param_sets,
+                method='odeint',
+            )
+            # Drop patients whose trajectories are numerically or physiologically invalid.
+            valid_mask, _issues = ode_simulator.check_trajectory_normal_range_validity(
+                trajectories,
+                config=config,
+                check_nans=True,
+            )
+            valid_fraction = float(valid_mask.sum()) / float(valid_mask.size)
+            if valid_fraction < 0.7:
+                # For the very first template/system (sample_order == 0), allow a
+                # more permissive evaluation so that we always obtain an initial
+                # baseline score, even if many trajectories are invalid.
+                # For all later samples, enforce the 0.8 threshold strictly.
+                if sample_order not in (0, None):
+                    # Signal to the outer evaluator that this system should be rejected.
+                    raise _PhysioRejection(valid_fraction)
+            # Map observed biomarker names to their indices in the full config
+            # order so we can always return trajectories whose biomarker dimension
+            # matches `biomarker_names`, even if all trajectories are invalid.
+            observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
+
+            if not np.any(valid_mask):
+                # No valid trajectories: return an empty array with the correct
+                # biomarker dimension so downstream summary-stat routines do not
+                # see a mismatch between n_bio and len(biomarker_names).
+                empty = trajectories[valid_mask][..., observed_indices]
+                return empty
+
+            # Restrict trajectories to valid patients and observed biomarkers.
+            return trajectories[valid_mask][..., observed_indices]
 
     log_sl = LogSyntheticLikelihood(
         s_obs=s_obs,
@@ -796,7 +853,12 @@ def _evaluate_system_logsl_core(
     )
 
     try:
-        log_likelihood, details = log_sl.evaluate(param_sampler, t_eval, verbose=False)
+        log_likelihood, details = log_sl.evaluate(
+            param_sampler,
+            t_eval,
+            verbose=False,
+            n_jobs=n_jobs,
+        )
     except _PhysioRejection as e:
         # System-level rejection: at least one SL simulation had < 80% valid patients.
         prefix = f"Sample {sample_order}: " if sample_order is not None else ""
@@ -828,6 +890,8 @@ def evaluate_system_logsl(
     param_distributions: Dict[str, Dict[str, float]] | None,
     verbose: bool = False,
     sample_order: int | None = None,
+    backend: str = "cpu",
+    n_jobs: int = 1,
 ) -> float | None:
     """Evaluate a system function via log synthetic likelihood for a given problem."""
     score, _details, _s_obs, _names, _bios = _evaluate_system_logsl_core(
@@ -836,6 +900,8 @@ def evaluate_system_logsl(
         param_distributions=param_distributions,
         verbose=verbose,
         sample_order=sample_order,
+        backend=backend,
+        n_jobs=n_jobs,
     )
     return score
 
@@ -846,6 +912,8 @@ def evaluate_system_logsl_with_feedback(
     param_distributions: Dict[str, Dict[str, float]] | None,
     verbose: bool = False,
     sample_order: int | None = None,
+    backend: str = "cpu",
+    n_jobs: int = 1,
 ) -> Tuple[float | None, str | None]:
     """Evaluate system and return (score, feedback) for LLM-guided optimization."""
     score, details, s_obs, stat_names, biomarker_names = _evaluate_system_logsl_core(
@@ -854,6 +922,8 @@ def evaluate_system_logsl_with_feedback(
         param_distributions=param_distributions,
         verbose=verbose,
         sample_order=sample_order,
+        backend=backend,
+        n_jobs=n_jobs,
     )
     if score is None or details is None or s_obs is None or stat_names is None or biomarker_names is None:
         return None, None
