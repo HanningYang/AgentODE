@@ -241,8 +241,6 @@ class LocalSandbox(Sandbox):
 
         return results
 
-
-    def _get_results(self, queue):
         for _ in range(5):
             if not queue.empty():
                 return queue.get_nowait()
@@ -439,6 +437,7 @@ class Evaluator:
         new_function.param_distributions = param_distributions
 
         time_reset = time.time()
+        sample_order = getattr(new_function, 'global_sample_nums', None)
 
         # Two evaluation modes:
         #   1) Legacy spec-based: use @evaluate.run inside the spec via Sandbox.
@@ -466,349 +465,353 @@ class Evaluator:
         else:
             # Centralized evaluation path: use synthetic likelihood against
             # observed summary statistics and optionally iterate to optimize
-            # parameter priors for this specific ODE structure.
-            from llmode import synthetic_likelihood
-            from llmode import param_utils
-
-            problem_name = kwargs.get('problem_name') or self._problem_name
-            if problem_name is None:
-                raise ValueError(
-                    'Centralized evaluation requires `problem_name` to be provided.'
-                )
-
-            # Obtain an executable callable for the evolved system by executing
-            # the full program and reading the function from its globals.
-            all_globals_namespace: dict[str, Any] = {}
-            exec(program, all_globals_namespace)
-            system_func = all_globals_namespace[self._function_to_evolve]
-
-            # Prepare system code string for prompts.
+            # parameter priors for this specific ODE structure. Wrap this whole
+            # flow in a local sandbox so that any error only invalidates this
+            # structure rather than crashing the entire run.
             try:
-                program_obj = code_manipulation.text_to_program(program)
-                system_fn_obj = program_obj.get_function(self._function_to_evolve)
-                system_code_str = str(system_fn_obj)
-            except Exception:
-                system_code_str = ""
+                from llmode import synthetic_likelihood
+                from llmode import param_utils
 
-            use_gpu_backend = self._is_torch_system(system_code_str)
-
-            sample_order = getattr(new_function, 'global_sample_nums', None)
-
-            config_obj = kwargs.get('config', None)
-            max_steps = 1
-            patience = 0
-            rel_thresh = 0.1
-            if enable_param_optim and config_obj is not None:
-                try:
-                    max_steps = int(getattr(config_obj, 'param_optim_steps', 1))
-                    patience = int(getattr(config_obj, 'param_optim_patience', 3))
-                    rel_thresh = float(
-                        getattr(config_obj, 'param_optim_rel_improvement', 0.1)
+                problem_name = kwargs.get('problem_name') or self._problem_name
+                if problem_name is None:
+                    raise ValueError(
+                        'Centralized evaluation requires `problem_name` to be provided.'
                     )
+
+                # Obtain an executable callable for the evolved system by executing
+                # the full program and reading the function from its globals.
+                all_globals_namespace: dict[str, Any] = {}
+                exec(program, all_globals_namespace)
+                system_func = all_globals_namespace[self._function_to_evolve]
+
+                # Prepare system code string for prompts.
+                try:
+                    program_obj = code_manipulation.text_to_program(program)
+                    system_fn_obj = program_obj.get_function(self._function_to_evolve)
+                    system_code_str = str(system_fn_obj)
                 except Exception:
-                    max_steps = 1
-                    patience = 3
-                    rel_thresh = 0.1
-            if max_steps < 1:
+                    system_code_str = ""
+
+                use_gpu_backend = self._is_torch_system(system_code_str)
+
+                config_obj = kwargs.get('config', None)
                 max_steps = 1
-            if patience < 1:
-                patience = 1
-            if rel_thresh <= 0.0:
+                patience = 0
                 rel_thresh = 0.1
-
-            # If no parameter priors are available yet (e.g., centralized AKI
-            # problems), run an initial parameter-inference call using the
-            # base spec_parameters_{problem}.txt template.
-            if param_distributions is None and config_obj is not None:
-                try:
-                    from llmode import param_utils as _param_utils_init
-
-                    spec_path = os.path.join(
-                        "specs_parameters", f"spec_parameters_{problem_name}.txt"
-                    )
-                    init_prompt = _param_utils_init.build_param_inference_prompt(
-                        system_code=system_code_str or str(system_func),
-                        spec_template_path=spec_path,
-                        function_name=self._function_to_evolve,
-                    )
-                    if DEBUG_PRINTS:
-                        print("[Generated Prompt for Initial Parameter Inference]")
-                        print(init_prompt)
-                    init_params = _param_utils_init.run_param_optimization_llm(
-                        init_prompt,
-                        config_obj,
-                    )
-                except Exception as e:
-                    print(f"[Initial param inference] Failed: {e}")
-                    init_params = None
-
-                if init_params is not None:
-                    param_distributions = init_params
-                    kwargs['param_distributions'] = init_params
-                    new_function.param_distributions = init_params
-
-            if param_distributions is None or not enable_param_optim or max_steps == 1:
-                # Legacy behavior: evaluate once and use that score.
-                score, _feedback = synthetic_likelihood.evaluate_system_logsl_with_feedback(
-                    system_func=system_func,
-                    problem_name=problem_name,
-                    param_distributions=param_distributions,
-                    verbose=False,
-                    sample_order=sample_order,
-                    backend="gpu" if use_gpu_backend else "cpu",
-                )
-                print(
-                    f"[Centralized evaluation] Sample {sample_order}: "
-                    f"logSL={score if score is not None else 'None'} (no optimization)."
-                )
-                # After evaluating log synthetic likelihood, compute a quadratic
-                # summary-statistics score for comparing ODE structures using the
-                # final parameter distributions.
-                if (
-                    score is not None
-                    and np.isfinite(score)
-                    and param_distributions is not None
-                ):
+                if enable_param_optim and config_obj is not None:
                     try:
-                        from llmode import quadratic_score as _quadratic_score
+                        max_steps = int(getattr(config_obj, 'param_optim_steps', 1))
+                        patience = int(getattr(config_obj, 'param_optim_patience', 3))
+                        rel_thresh = float(
+                            getattr(config_obj, 'param_optim_rel_improvement', 0.1)
+                        )
+                    except Exception:
+                        max_steps = 1
+                        patience = 3
+                        rel_thresh = 0.1
+                if max_steps < 1:
+                    max_steps = 1
+                if patience < 1:
+                    patience = 1
+                if rel_thresh <= 0.0:
+                    rel_thresh = 0.1
 
-                        quad = _quadratic_score.evaluate_system_quadratic_score(
-                            system_func=system_func,
-                            problem_name=problem_name,
-                            param_distributions=param_distributions,
-                            verbose=False,
-                            sample_order=sample_order,
-                            backend="gpu" if use_gpu_backend else "cpu",
+                # If no parameter priors are available yet (e.g., centralized AKI
+                # problems), run an initial parameter-inference call using the
+                # base spec_parameters_{problem}.txt template.
+                if param_distributions is None and config_obj is not None:
+                    try:
+                        from llmode import param_utils as _param_utils_init
+
+                        spec_path = os.path.join(
+                            "specs_parameters", f"spec_parameters_{problem_name}.txt"
+                        )
+                        init_prompt = _param_utils_init.build_param_inference_prompt(
+                            system_code=system_code_str or str(system_func),
+                            spec_template_path=spec_path,
+                            function_name=self._function_to_evolve,
+                        )
+                        if DEBUG_PRINTS:
+                            print("[Generated Prompt for Initial Parameter Inference]")
+                            print(init_prompt)
+                        init_params = _param_utils_init.run_param_optimization_llm(
+                            init_prompt,
+                            config_obj,
                         )
                     except Exception as e:
-                        print(
-                            f"[Centralized evaluation] Failed to compute quadratic score: {e}"
-                        )
-                        quad = None
+                        print(f"[Initial param inference] Failed: {e}")
+                        init_params = None
 
-                    if quad is not None and np.isfinite(quad):
-                        scores_per_test['quadratic_score'] = round(float(quad), 2)
-            else:
-                # Full optimization loop over parameter priors for this structure,
-                # with early stopping based on relative logSL improvement and
-                # consecutive null-score attempts.
-                best_params: dict[str, Any] = param_distributions
-                best_score: float | None = None
-                best_feedback: str | None = None
-                best_implaus: str | None = None
-                no_improve_count = 0
-                null_score_count = 0
+                    if init_params is not None:
+                        param_distributions = init_params
+                        kwargs['param_distributions'] = init_params
+                        new_function.param_distributions = init_params
 
-                # Initial evaluation with the LLM-inferred priors.
-                t0 = time.time()
-                score, feedback = synthetic_likelihood.evaluate_system_logsl_with_feedback(
-                    system_func=system_func,
-                    problem_name=problem_name,
-                    param_distributions=best_params,
-                    verbose=False,
-                    sample_order=sample_order,
-                    backend="gpu" if use_gpu_backend else "cpu",
-                )
-                init_eval_time = time.time() - t0
-                if score is None or not np.isfinite(score):
-                    best_score = None
-                    best_feedback = None
-                    best_implaus = _compute_implausibility_report(
-                        system_func=system_func,
-                        param_distributions=best_params,
-                        problem_name=problem_name,
-                    )
-                    if DEBUG_PRINTS:
-                        print(
-                            f"[Param optimization] Sample {sample_order}: "
-                            "initial logSL=None (implausible trajectories)."
-                        )
-                else:
-                    best_score = float(score)
-                    best_feedback = feedback
-                    best_implaus = None
-                    no_improve_count = 0
-                    null_score_count = 0
-                    if DEBUG_PRINTS:
-                        print(
-                            f"[Param optimization] Sample {sample_order}: "
-                            f"initial logSL={best_score:.3f}"
-                        )
-                _print_param_eval_summary(
-                    step_idx=1,
-                    max_steps=max_steps,
-                    score=best_score,
-                    new_function=new_function,
-                    eval_time=init_eval_time,
-                    llm_source=kwargs.get('llm_source', None),
-                    llm_model_name=kwargs.get('llm_model_name', None),
-                )
-
-                # Iterative optimization: refine parameter priors up to max_steps.
-                steps_done = 1
-                while steps_done < max_steps:
-                    mode = 'implausible' if best_score is None else 'log_sl'
-                    try:
-                        opt_prompt = param_utils.build_param_optimization_prompt(
-                            system_code=system_code_str,
-                            problem_name=problem_name,
-                            current_params=best_params,
-                            mode=mode,
-                            implaus_report=best_implaus if mode == 'implausible' else None,
-                            sl_feedback=best_feedback if mode == 'log_sl' else None,
-                        )
-                    except Exception as e:
-                        print(f"[Param optimization] Failed to build prompt: {e}")
-                        break
-
-                    if DEBUG_PRINTS:
-                        print(
-                            f"\n[Param optimization] Sample {sample_order}: "
-                            f"step {steps_done+1}/{max_steps}, mode={mode}, "
-                            f"current_best_logSL="
-                            f"{best_score if best_score is not None else 'None'}"
-                        )
-                        print("[Generated Prompt for Parameter Optimization]")
-                        print(opt_prompt)
-
-                    new_params = param_utils.run_param_optimization_llm(
-                        opt_prompt,
-                        config_obj,
-                    )
-                    if new_params is None:
-                        break
-
-                    t_step = time.time()
-                    new_score, new_feedback = synthetic_likelihood.evaluate_system_logsl_with_feedback(
+                if param_distributions is None or not enable_param_optim or max_steps == 1:
+                    # Legacy behavior: evaluate once and use that score.
+                    score, _feedback = synthetic_likelihood.evaluate_system_logsl_with_feedback(
                         system_func=system_func,
                         problem_name=problem_name,
-                        param_distributions=new_params,
+                        param_distributions=param_distributions,
                         verbose=False,
                         sample_order=sample_order,
                         backend="gpu" if use_gpu_backend else "cpu",
                     )
-                    step_eval_time = time.time() - t_step
+                    print(
+                        f"[Centralized evaluation] Sample {sample_order}: "
+                        f"logSL={score if score is not None else 'None'} (no optimization)."
+                    )
+                    # After evaluating log synthetic likelihood, compute a quadratic
+                    # summary-statistics score for comparing ODE structures using the
+                    # final parameter distributions.
+                    if (
+                        score is not None
+                        and np.isfinite(score)
+                        and param_distributions is not None
+                    ):
+                        try:
+                            from llmode import quadratic_score as _quadratic_score
 
-                    if new_score is None or not np.isfinite(new_score):
-                        # No finite score; compute implausibility report for this candidate.
-                        new_implaus = _compute_implausibility_report(
+                            quad = _quadratic_score.evaluate_system_quadratic_score(
+                                system_func=system_func,
+                                problem_name=problem_name,
+                                param_distributions=param_distributions,
+                                verbose=False,
+                                sample_order=sample_order,
+                                backend="gpu" if use_gpu_backend else "cpu",
+                            )
+                        except Exception as e:
+                            print(
+                                f"[Centralized evaluation] Failed to compute quadratic score: {e}"
+                            )
+                            quad = None
+
+                        if quad is not None and np.isfinite(quad):
+                            scores_per_test['quadratic_score'] = round(float(quad), 2)
+                else:
+                    # Full optimization loop over parameter priors for this structure,
+                    # with early stopping based on relative logSL improvement and
+                    # consecutive null-score attempts.
+                    best_params: dict[str, Any] = param_distributions
+                    best_score: float | None = None
+                    best_feedback: str | None = None
+                    best_implaus: str | None = None
+                    no_improve_count = 0
+                    null_score_count = 0
+
+                    # Initial evaluation with the LLM-inferred priors.
+                    t0 = time.time()
+                    score, feedback = synthetic_likelihood.evaluate_system_logsl_with_feedback(
+                        system_func=system_func,
+                        problem_name=problem_name,
+                        param_distributions=best_params,
+                        verbose=False,
+                        sample_order=sample_order,
+                        backend="gpu" if use_gpu_backend else "cpu",
+                    )
+                    init_eval_time = time.time() - t0
+                    if score is None or not np.isfinite(score):
+                        best_score = None
+                        best_feedback = None
+                        best_implaus = _compute_implausibility_report(
                             system_func=system_func,
-                            param_distributions=new_params,
+                            param_distributions=best_params,
                             problem_name=problem_name,
                         )
-                        null_score_count += 1
-                        no_improve_count = 0
-                        if best_score is None:
-                            # When all candidates so far have null scores, keep
-                            # the *latest* candidate info, as requested.
-                            best_params = new_params
-                            best_implaus = new_implaus
-                            best_feedback = None
                         if DEBUG_PRINTS:
                             print(
                                 f"[Param optimization] Sample {sample_order}: "
-                                f"step {steps_done+1} produced logSL=None; "
-                                f"null_score_count={null_score_count}/{patience}."
+                                "initial logSL=None (implausible trajectories)."
                             )
-                        if null_score_count >= patience:
-                            break
                     else:
-                        new_score_val = float(new_score)
-                        # Reset null-score streak.
+                        best_score = float(score)
+                        best_feedback = feedback
+                        best_implaus = None
+                        no_improve_count = 0
                         null_score_count = 0
-
-                        if best_score is None:
-                            # Any finite score counts as an improvement when we
-                            # previously had no valid score.
-                            no_improve_count = 0
-                        else:
-                            improvement = new_score_val - best_score
-                            if improvement <= 0.0:
-                                # Worse or equal score: definitely no improvement.
-                                no_improve_count += 1
-                            else:
-                                # Relative improvement measured against the scale of
-                                # the current best score. Use absolute value so that
-                                # negative logSL values do not flip the sign.
-                                denom = max(abs(best_score) + 1.0, 1.0)
-                                rel_improvement = improvement / denom
-                                if rel_improvement < rel_thresh:
-                                    no_improve_count += 1
-                                else:
-                                    no_improve_count = 0
-
-                        if best_score is None or new_score_val > best_score:
-                            best_score = new_score_val
-                            best_params = new_params
-                            best_feedback = new_feedback
-                            best_implaus = None
-
                         if DEBUG_PRINTS:
-                            best_str = f"{best_score:.3f}" if best_score is not None else "None"
                             print(
                                 f"[Param optimization] Sample {sample_order}: "
-                                f"step {steps_done+1} produced logSL={new_score_val:.3f}; "
-                                f"best_logSL={best_str}, "
-                                f"no_improve_count={no_improve_count}/{patience}."
+                                f"initial logSL={best_score:.3f}"
                             )
-                            _print_param_eval_summary(
-                                step_idx=steps_done + 1,
-                                max_steps=max_steps,
-                                score=new_score_val,
-                                new_function=new_function,
-                                eval_time=step_eval_time,
-                                llm_source=kwargs.get('llm_source', None),
-                                llm_model_name=kwargs.get('llm_model_name', None),
-                            )
+                    _print_param_eval_summary(
+                        step_idx=1,
+                        max_steps=max_steps,
+                        score=best_score,
+                        new_function=new_function,
+                        eval_time=init_eval_time,
+                        llm_source=kwargs.get('llm_source', None),
+                        llm_model_name=kwargs.get('llm_model_name', None),
+                    )
 
-                        if best_score is not None and no_improve_count >= patience:
+                    # Iterative optimization: refine parameter priors up to max_steps.
+                    steps_done = 1
+                    while steps_done < max_steps:
+                        mode = 'implausible' if best_score is None else 'log_sl'
+                        try:
+                            opt_prompt = param_utils.build_param_optimization_prompt(
+                                system_code=system_code_str,
+                                problem_name=problem_name,
+                                current_params=best_params,
+                                mode=mode,
+                                implaus_report=best_implaus if mode == 'implausible' else None,
+                                sl_feedback=best_feedback if mode == 'log_sl' else None,
+                            )
+                        except Exception as e:
+                            print(f"[Param optimization] Failed to build prompt: {e}")
                             break
 
-                    steps_done += 1
+                        if DEBUG_PRINTS:
+                            print(
+                                f"\n[Param optimization] Sample {sample_order}: "
+                                f"step {steps_done+1}/{max_steps}, mode={mode}, "
+                                f"current_best_logSL="
+                                f"{best_score if best_score is not None else 'None'}"
+                            )
+                            print("[Generated Prompt for Parameter Optimization]")
+                            print(opt_prompt)
 
-                # After optimization, record only the best candidate.
-                final_score = best_score
-                final_params = best_params
-                if final_score is not None and np.isfinite(final_score):
-                    print(
-                        f"[Param optimization] Sample {sample_order}: "
-                        f"final best logSL={final_score:.3f}"
-                    )
-                else:
-                    print(
-                        f"[Param optimization] Sample {sample_order}: "
-                        "no finite logSL found; using latest implausible candidate."
-                    )
+                        new_params = param_utils.run_param_optimization_llm(
+                            opt_prompt,
+                            config_obj,
+                        )
+                        if new_params is None:
+                            break
 
-                # Make sure downstream components see the best param priors.
-                param_distributions = final_params
-                kwargs['param_distributions'] = final_params
-                new_function.param_distributions = final_params
-
-                # After finishing logSL-based parameter optimization, compute a
-                # quadratic summary-statistics score using the final parameter
-                # distributions so that ODE structures can be compared on a
-                # common quadratic scale.
-                if param_distributions is not None:
-                    try:
-                        from llmode import quadratic_score as _quadratic_score
-
-                        quad = _quadratic_score.evaluate_system_quadratic_score(
+                        t_step = time.time()
+                        new_score, new_feedback = synthetic_likelihood.evaluate_system_logsl_with_feedback(
                             system_func=system_func,
                             problem_name=problem_name,
-                            param_distributions=param_distributions,
+                            param_distributions=new_params,
                             verbose=False,
                             sample_order=sample_order,
                             backend="gpu" if use_gpu_backend else "cpu",
                         )
-                    except Exception as e:
-                        print(
-                            f"[Param optimization] Failed to compute quadratic score: {e}"
-                        )
-                        quad = None
+                        step_eval_time = time.time() - t_step
 
-                    if quad is not None and np.isfinite(quad):
-                        scores_per_test['quadratic_score'] = round(float(quad), 2)
+                        if new_score is None or not np.isfinite(new_score):
+                            # No finite score; compute implausibility report for this candidate.
+                            new_implaus = _compute_implausibility_report(
+                                system_func=system_func,
+                                param_distributions=new_params,
+                                problem_name=problem_name,
+                            )
+                            null_score_count += 1
+                            no_improve_count = 0
+                            if best_score is None:
+                                # When all candidates so far have null scores, keep
+                                # the *latest* candidate info, as requested.
+                                best_params = new_params
+                                best_implaus = new_implaus
+                                best_feedback = None
+                            if DEBUG_PRINTS:
+                                print(
+                                    f"[Param optimization] Sample {sample_order}: "
+                                    f"step {steps_done+1} produced logSL=None; "
+                                    f"null_score_count={null_score_count}/{patience}."
+                                )
+                            if null_score_count >= patience:
+                                break
+                        else:
+                            new_score_val = float(new_score)
+                            # Reset null-score streak.
+                            null_score_count = 0
+
+                            if best_score is None:
+                                # Any finite score counts as an improvement when we
+                                # previously had no valid score.
+                                no_improve_count = 0
+                            else:
+                                improvement = new_score_val - best_score
+                                if improvement <= 0.0:
+                                    # Worse or equal score: definitely no improvement.
+                                    no_improve_count += 1
+                                else:
+                                    # Relative improvement measured against the scale of
+                                    # the current best score. Use absolute value so that
+                                    # negative logSL values do not flip the sign.
+                                    denom = max(abs(best_score) + 1.0, 1.0)
+                                    rel_improvement = improvement / denom
+                                    if rel_improvement < rel_thresh:
+                                        no_improve_count += 1
+                                    else:
+                                        no_improve_count = 0
+
+                            if best_score is None or new_score_val > best_score:
+                                best_score = new_score_val
+                                best_params = new_params
+                                best_feedback = new_feedback
+                                best_implaus = None
+
+                            if DEBUG_PRINTS:
+                                best_str = f"{best_score:.3f}" if best_score is not None else "None"
+                                print(
+                                    f"[Param optimization] Sample {sample_order}: "
+                                    f"step {steps_done+1} produced logSL={new_score_val:.3f}; "
+                                    f"best_logSL={best_str}, "
+                                    f"no_improve_count={no_improve_count}/{patience}."
+                                )
+                                _print_param_eval_summary(
+                                    step_idx=steps_done + 1,
+                                    max_steps=max_steps,
+                                    score=new_score_val,
+                                    new_function=new_function,
+                                    eval_time=step_eval_time,
+                                    llm_source=kwargs.get('llm_source', None),
+                                    llm_model_name=kwargs.get('llm_model_name', None),
+                                )
+
+                            if best_score is not None and no_improve_count >= patience:
+                                break
+
+                        steps_done += 1
+
+                    # After optimization, record only the best candidate.
+                    final_score = best_score
+                    final_params = best_params
+                    if final_score is not None and np.isfinite(final_score):
+                        print(
+                            f"[Param optimization] Sample {sample_order}: "
+                            f"final best logSL={final_score:.3f}"
+                        )
+                    else:
+                        print(
+                            f"[Param optimization] Sample {sample_order}: "
+                            "no finite logSL found; using latest implausible candidate."
+                        )
+
+                    # Make sure downstream components see the best param priors.
+                    param_distributions = final_params
+                    kwargs['param_distributions'] = final_params
+                    new_function.param_distributions = final_params
+
+                    # After finishing logSL-based parameter optimization, compute a
+                    # quadratic summary-statistics score using the final parameter
+                    # distributions so that ODE structures can be compared on a
+                    # common quadratic scale.
+                    if param_distributions is not None:
+                        try:
+                            from llmode import quadratic_score as _quadratic_score
+
+                            quad = _quadratic_score.evaluate_system_quadratic_score(
+                                system_func=system_func,
+                                problem_name=problem_name,
+                                param_distributions=param_distributions,
+                                verbose=False,
+                                sample_order=sample_order,
+                                backend="gpu" if use_gpu_backend else "cpu",
+                            )
+                        except Exception as e:
+                            print(
+                                f"[Param optimization] Failed to compute quadratic score: {e}"
+                            )
+                            quad = None
+
+                        if quad is not None and np.isfinite(quad):
+                            scores_per_test['quadratic_score'] = round(float(quad), 2)
+            except Exception as e:
+                prefix = f"Sample {sample_order}: " if sample_order is not None else ""
+                print(f"{prefix}[Centralized evaluation] Failed with error: {e}")
 
         evaluate_time = time.time() - time_reset
 
