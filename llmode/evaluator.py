@@ -557,10 +557,10 @@ class Evaluator:
                         sample_order=sample_order,
                         backend="gpu" if use_gpu_backend else "cpu",
                     )
-                    print(
-                        f"[Centralized evaluation] Sample {sample_order}: "
-                        f"logSL={score if score is not None else 'None'} (no optimization)."
-                    )
+                    # print(
+                    #     f"[Centralized evaluation] Sample {sample_order}: "
+                    #     f"logSL={score if score is not None else 'None'} (no optimization)."
+                    # )
                     # After evaluating log synthetic likelihood, compute a quadratic
                     # summary-statistics score for comparing ODE structures using the
                     # final parameter distributions.
@@ -769,16 +769,16 @@ class Evaluator:
                     # After optimization, record only the best candidate.
                     final_score = best_score
                     final_params = best_params
-                    if final_score is not None and np.isfinite(final_score):
-                        print(
-                            f"[Param optimization] Sample {sample_order}: "
-                            f"final best logSL={final_score:.3f}"
-                        )
-                    else:
-                        print(
-                            f"[Param optimization] Sample {sample_order}: "
-                            "no finite logSL found; using latest implausible candidate."
-                        )
+                    # if final_score is not None and np.isfinite(final_score):
+                    #     print(
+                    #         f"[Param optimization] Sample {sample_order}: "
+                    #         f"final best logSL={final_score:.3f}"
+                    #     )
+                    # else:
+                    #     print(
+                    #         f"[Param optimization] Sample {sample_order}: "
+                    #         "no finite logSL found; using latest implausible candidate."
+                    #     )
 
                     # Make sure downstream components see the best param priors.
                     param_distributions = final_params

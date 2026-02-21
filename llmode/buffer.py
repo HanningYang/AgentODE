@@ -147,6 +147,12 @@ class ExperienceBuffer:
             self._best_scores_per_test_per_island[island_id] = scores_per_test
             self._best_score_per_island[island_id] = score
             logging.info('Best score of island %d increased to %s', island_id, score)
+            # Key progress signal: print when an island's best score improves.
+            sample_order = getattr(program, 'global_sample_nums', None)
+            print(
+                f"[Island {island_id}] Updated best score to {score} "
+                f"(sample {sample_order})"
+            )
 
         profiler: profile.Profiler = kwargs.get('profiler', None)
         if profiler:
@@ -328,9 +334,9 @@ class Island:
         probabilities = _softmax(normalized_scores, temperature)
 
         # Print cluster probabilities
-        print(f"\n  Cluster sampling probabilities (temperature={temperature:.4f}):")
-        for i, (sig, prob, score) in enumerate(zip(signatures, probabilities, cluster_scores), 1):
-            print(f"    Cluster {i}: prob={prob:.4f}, score={score:.6f}, signature={sig}")
+        # print(f"\n  Cluster sampling probabilities (temperature={temperature:.4f}):")
+        # for i, (sig, prob, score) in enumerate(zip(signatures, probabilities, cluster_scores), 1):
+        #     print(f"    Cluster {i}: prob={prob:.4f}, score={score:.6f}, signature={sig}")
 
         functions_per_prompt = min(len(self._clusters), self._functions_per_prompt)
 
@@ -367,10 +373,10 @@ class Island:
         signature_to_cluster_idx = {sig: i + 1 for i, sig in enumerate(signatures)}
 
         # Print selected clusters information
-        if island_id is not None:
-            print(f"\n  → Selected {functions_per_prompt} cluster(s) for prompt on Island {island_id}:")
-        else:
-            print(f"\n  → Selected {functions_per_prompt} cluster(s) for prompt:")
+        # if island_id is not None:
+        #     print(f"\n  → Selected {functions_per_prompt} cluster(s) for prompt on Island {island_id}:")
+        # else:
+        #     print(f"\n  → Selected {functions_per_prompt} cluster(s) for prompt:")
 
         implementations: list[code_manipulation.Function] = []
 
@@ -382,22 +388,22 @@ class Island:
             scores.append(cluster.score)
 
             # Print which cluster and program was selected
-            sample_num = getattr(sampled_program, 'global_sample_nums', None)
-            # Use 0 for initial template programs (no global_sample_nums),
-            # to match the convention in `profile.py`.
-            printable_sample = sample_num if sample_num is not None else 0
-            cluster_idx = signature_to_cluster_idx.get(signature, -1)
-            if island_id is not None:
-                print(
-                    f"     Island {island_id}, Cluster {cluster_idx}: "
-                    f"signature={signature}, score={cluster.score:.6f}, "
-                    f"sampled program from sample #{printable_sample}"
-                )
-            else:
-                print(
-                    f"     Cluster {cluster_idx}: signature={signature}, "
-                    f"score={cluster.score:.6f}, sampled program from sample #{printable_sample}"
-                )
+            # sample_num = getattr(sampled_program, 'global_sample_nums', None)
+            # # Use 0 for initial template programs (no global_sample_nums),
+            # # to match the convention in `profile.py`.
+            # printable_sample = sample_num if sample_num is not None else 0
+            # cluster_idx = signature_to_cluster_idx.get(signature, -1)
+            # if island_id is not None:
+            #     print(
+            #         f"     Island {island_id}, Cluster {cluster_idx}: "
+            #         f"signature={signature}, score={cluster.score:.6f}, "
+            #         f"sampled program from sample #{printable_sample}"
+            #     )
+            # else:
+            #     print(
+            #         f"     Cluster {cluster_idx}: signature={signature}, "
+            #         f"score={cluster.score:.6f}, sampled program from sample #{printable_sample}"
+            #     )
 
         '''
         # Print selected clusters information

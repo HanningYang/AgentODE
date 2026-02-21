@@ -130,7 +130,7 @@ class Sampler:
             # print(f"After Sample Batch #{self.__class__._global_samples_nums}")
             # print(f"Sampled from Island #{prompt.island_id}, Generated version: v{prompt.version_generated}")
             # print(f"{'='*80}")
-            self._database.print_island_info()
+            # self._database.print_island_info()
 
     def _get_global_sample_nums(self) -> int:
         return self.__class__._global_samples_nums

@@ -214,10 +214,10 @@ def evaluate_system_quadratic_score(
     except _PhysioRejection as e:
         # System-level rejection: simulation had < 80% valid patients.
         prefix = f"Sample {sample_order}: " if sample_order is not None else ""
-        print(
-            f"{prefix}System rejected: only {e.valid_fraction:.3f} of trajectories "
-            "fall within physiological normal ranges."
-        )
+        # print(
+        #     f"{prefix}System rejected: only {e.valid_fraction:.3f} of trajectories "
+        #     "fall within physiological normal ranges."
+        # )
         return None
 
     # Compute summary statistics for the simulated trajectories.

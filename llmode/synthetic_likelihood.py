@@ -862,10 +862,10 @@ def _evaluate_system_logsl_core(
     except _PhysioRejection as e:
         # System-level rejection: at least one SL simulation had < 80% valid patients.
         prefix = f"Sample {sample_order}: " if sample_order is not None else ""
-        print(
-            f"{prefix}System rejected: only {e.valid_fraction:.3f} of trajectories "
-            "fall within physiological normal ranges."
-        )
+        # print(
+        #     f"{prefix}System rejected: only {e.valid_fraction:.3f} of trajectories "
+        #     "fall within physiological normal ranges."
+        # )
         return None, None, None, None, None
     if not np.isfinite(log_likelihood):
         return None, None, None, None, None

@@ -10,11 +10,13 @@ import json
 import os
 import sys
 import inspect
+from typing import Callable, Tuple, Optional
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import scipy.stats
-from typing import Callable, Tuple, Optional
+import torch
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -52,6 +54,9 @@ def load_function_from_log(
         data = json.load(f)
 
     function_str = data['function']
+    lowered = function_str.lower()
+    is_torch_system = ("import torch" in lowered) or ("torch." in lowered)
+
     print('Function:')
     print(function_str)
     print(64*'-')
@@ -60,8 +65,17 @@ def load_function_from_log(
     # Execute the function definition in an isolated namespace to obtain
     # a real Python callable `system` that we can pass to the ODE solver.
     namespace: dict = {"np": np}
+    if is_torch_system:
+        # Ensure that type annotations and torch operations inside the logged
+        # function can be resolved when executing the definition.
+        namespace["torch"] = torch
     exec(function_str, namespace)
     system_func = namespace.get("system")
+
+    if callable(system_func):
+        # Record whether this system is torch-based so that downstream helpers
+        # can select the appropriate simulator backend.
+        setattr(system_func, "_torch_backend", bool(is_torch_system))
 
     # Try to infer the number of state variables from the function body by
     # looking for assignments of the form:
@@ -136,14 +150,29 @@ def simulate_trajectories(
         # in the sample log.
         params = np.ones((n_patients, 1))
 
+    use_torch_backend = bool(getattr(system_func, "_torch_backend", False))
+
     # Simulate trajectories
-    trajectories = ode_simulator.simulate_ode_system(
-        system_func=system_func,
-        initial_conditions=ic_array,
-        time_grid=t_eval,
-        params=params,
-        method='odeint',
-    )
+    if use_torch_backend:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        traj_t = ode_simulator.simulate_ode_system_torch(
+            system_func=system_func,
+            initial_conditions=ic_array,
+            time_grid=t_eval,
+            params=params,
+            device=device,
+            dtype=torch.float32,
+            method="rk4",
+        )
+        trajectories = traj_t.detach().cpu().numpy()
+    else:
+        trajectories = ode_simulator.simulate_ode_system(
+            system_func=system_func,
+            initial_conditions=ic_array,
+            time_grid=t_eval,
+            params=params,
+            method='odeint',
+        )
 
     # Drop patients whose trajectories are numerically or physiologically invalid,
     # to match the behavior used in the quadratic-score evaluation.
@@ -437,14 +466,19 @@ def main():
     else:
         print(f"\nObserved data file not found at {observed_data_path}; skipping summary stats comparison.")
 
-    # Compute quadratic summary-statistics score (if parameter priors are available)
+    # Compute quadratic summary-statistics score (if parameter priors are available).
+    # For torch-based systems, ensure we use the torch simulator backend so that
+    # the trajectories used for scoring are consistent with those used for
+    # visualization and centralized evaluation.
     if param_distributions is not None:
+        quad_backend = "gpu" if getattr(wrapped_system_func, "_torch_backend", False) else "cpu"
         quadratic = evaluate_system_quadratic_score(
             system_func=wrapped_system_func,
             problem_name=args.problem_name,
             param_distributions=param_distributions,
             verbose=True,
             sample_order=args.sample_order,
+            backend=quad_backend,
         )
         if quadratic is not None:
             print(f"Quadratic summary-statistics score: {quadratic:.2f}")
