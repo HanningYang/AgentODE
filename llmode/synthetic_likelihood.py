@@ -535,7 +535,6 @@ def generate_llm_feedback(
     # 4. Format Output
     # ========================================
     output_lines: List[str] = []
-    output_lines.append(f"## Evaluation Score: {log_likelihood:.2f} (higher is better)\n")
 
     # Per-biomarker table (disabled for now; kept for future use).
     # output_lines.append("## Per-Biomarker Summary:\n")
@@ -559,14 +558,14 @@ def generate_llm_feedback(
     #     )
 
     # Top 5 problems
-    output_lines.append("\n## Top 5 Problems:")
+    # output_lines.append("\n## Top 5 Problems:")
     for i, prob in enumerate(problems[:5]):
         output_lines.append(f"{i+1}. **{prob['name']}**: {prob['direction']}")
         output_lines.append(
             f"   - Observed: {prob['observed']:.3f}, "
             f"Simulated: {prob['simulated']:.3f} (±{prob['sim_std']:.3f})"
         )
-        output_lines.append(f"   - Contribution: {prob['contribution']:.2f}")
+        # output_lines.append(f"   - Contribution: {prob['contribution']:.2f}")
 
     return "\n".join(output_lines) + "\n"
 
@@ -781,7 +780,7 @@ def _evaluate_system_logsl_core(
                 check_nans=True,
             )
             valid_fraction = float(valid_mask.sum()) / float(valid_mask.size)
-            if valid_fraction < 0.7:
+            if valid_fraction < 0.8:
                 if sample_order not in (0, None):
                     raise _PhysioRejection(valid_fraction)
 
@@ -818,23 +817,15 @@ def _evaluate_system_logsl_core(
                 check_nans=True,
             )
             valid_fraction = float(valid_mask.sum()) / float(valid_mask.size)
-            if valid_fraction < 0.7:
-                # For the very first template/system (sample_order == 0), allow a
-                # more permissive evaluation so that we always obtain an initial
-                # baseline score, even if many trajectories are invalid.
-                # For all later samples, enforce the 0.8 threshold strictly.
+            if valid_fraction < 0.8:
                 if sample_order not in (0, None):
                     # Signal to the outer evaluator that this system should be rejected.
                     raise _PhysioRejection(valid_fraction)
             # Map observed biomarker names to their indices in the full config
-            # order so we can always return trajectories whose biomarker dimension
-            # matches `biomarker_names`, even if all trajectories are invalid.
             observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
 
             if not np.any(valid_mask):
-                # No valid trajectories: return an empty array with the correct
-                # biomarker dimension so downstream summary-stat routines do not
-                # see a mismatch between n_bio and len(biomarker_names).
+                # No valid trajectories: return an empty array 
                 empty = trajectories[valid_mask][..., observed_indices]
                 return empty
 

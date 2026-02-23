@@ -1,13 +1,8 @@
-"""Shared summary-statistics utilities for ODE evaluation.
-
-Used by both:
-  - synthetic_likelihood.py
-  - quadratic_score.py
-"""
+"""Shared summary-statistics utilities for ODE evaluation."""
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -60,6 +55,7 @@ def compute_summary_stats(
     t_eval: np.ndarray,
     biomarker_names: List[str],
     std_params: Dict[str, Dict[str, float]],
+    standardization: bool = False,
 ) -> np.ndarray:
     """Compute summary statistics from simulated trajectories.
 
@@ -77,17 +73,21 @@ def compute_summary_stats(
 
     stats: List[float] = []
 
-    # 1. Marginal quantile polynomials on standardized values (2 * n_bio).
+    # 1. Marginal quantile polynomials (2 * n_bio).
+    #    When `standardization=True`, coefficients are computed on standardized
+    #    values using `std_params`; otherwise raw values are used.
     for b, bio_name in enumerate(biomarker_names):
         all_values = trajectories[:, :, b].ravel()
         all_values = all_values[~np.isnan(all_values)]
-
-        standardized_values = standardize(
-            all_values,
-            std_params[bio_name]["mean"],
-            std_params[bio_name]["std"],
-        )
-        coeffs = polynomial_quantile_stats_deg01(standardized_values)
+        if standardization:
+            values_for_quantile = standardize(
+                all_values,
+                std_params[bio_name]["mean"],
+                std_params[bio_name]["std"],
+            )
+        else:
+            values_for_quantile = all_values
+        coeffs = polynomial_quantile_stats_deg01(values_for_quantile)
         stats.extend(coeffs.tolist())
 
     # 2. Temporal: lag-1 autocorrelation (n_bio).
@@ -173,6 +173,7 @@ def compute_summary_stats_from_df(
     episode_col: str = "hadm_id",
     time_col: str = "hours_from_admission",
     verbose: bool = False,
+    standardization: bool = False,
 ) -> np.ndarray:
     """Compute summary statistics from observed longitudinal data."""
     stats: List[float] = []
@@ -186,7 +187,9 @@ def compute_summary_stats_from_df(
         print(f"Unique episodes: {df[episode_col].nunique()}")
         print(f"\nBiomarker columns: {biomarker_cols}")
 
-    # 1. Marginal quantile polynomials on standardized values.
+    # 1. Marginal quantile polynomials.
+    #    When `standardization=True`, coefficients are computed on standardized
+    #    values using `std_params`; otherwise raw values are used.
     if verbose:
         print("\n[1] Quantile Polynomial Coefficients (deg0, deg1):")
     for col in biomarker_cols:
@@ -199,12 +202,15 @@ def compute_summary_stats_from_df(
             print(
                 f"    Standardization - Mean: {std_params[col]['mean']:.4f}, Std: {std_params[col]['std']:.4f}"
             )
-        standardized_values = standardize(
-            values,
-            std_params[col]["mean"],
-            std_params[col]["std"],
-        )
-        coeffs = polynomial_quantile_stats_deg01(standardized_values)
+        if standardization:
+            values_for_quantile = standardize(
+                values,
+                std_params[col]["mean"],
+                std_params[col]["std"],
+            )
+        else:
+            values_for_quantile = values
+        coeffs = polynomial_quantile_stats_deg01(values_for_quantile)
         if verbose:
             print(f"    Quantile poly deg0: {coeffs[0]:.6f}, deg1: {coeffs[1]:.6f}")
         stats.extend(coeffs.tolist())
@@ -330,13 +336,14 @@ def get_stat_names(biomarker_cols: List[str]) -> List[str]:
     return names
 
 
-_OBSERVED_CACHE: Dict[str, Dict[str, object]] = {}
+_OBSERVED_CACHE: Dict[Tuple[str, bool], Dict[str, object]] = {}
 
 
-def get_observed_summary(problem_name: str) -> Dict[str, object]:
+def get_observed_summary(problem_name: str, standardization: bool = False) -> Dict[str, object]:
     """Load and cache observed-data summaries for a problem."""
-    if problem_name in _OBSERVED_CACHE:
-        return _OBSERVED_CACHE[problem_name]
+    cache_key = (problem_name, standardization)
+    if cache_key in _OBSERVED_CACHE:
+        return _OBSERVED_CACHE[cache_key]
 
     config = initial_condition_utils.load_ic_config(problem_name)
     biomarker_names = initial_condition_utils.get_observed_biomarker_order(config)
@@ -348,12 +355,14 @@ def get_observed_summary(problem_name: str) -> Dict[str, object]:
 
     std_params = compute_standardization_params(observed_df, biomarker_names)
     s_obs = compute_summary_stats_from_df(
-        observed_df,
-        biomarker_names,
-        std_params,
+        df=observed_df,
+        biomarker_cols=biomarker_names,
+        std_params=std_params,
         subject_col="subject_id",
         episode_col="hadm_id",
         time_col="hours_from_admission",
+        verbose=False,
+        standardization=standardization,
     )
     stat_names = get_stat_names(biomarker_names)
 
@@ -367,6 +376,5 @@ def get_observed_summary(problem_name: str) -> Dict[str, object]:
         "s_obs": s_obs,
         "stat_names": stat_names,
     }
-    _OBSERVED_CACHE[problem_name] = payload
+    _OBSERVED_CACHE[cache_key] = payload
     return payload
-

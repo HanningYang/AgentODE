@@ -26,13 +26,13 @@ from llmode import code_manipulation
 from llmode import initial_condition_utils
 from llmode import ode_simulator
 from llmode import param_utils
-from llmode.quadratic_score import (
+from llmode.summary_stats import (
     compute_standardization_params,
     compute_summary_stats_from_df,
     compute_summary_stats,
     get_stat_names,
 )
-from llmode.quadratic_score import evaluate_system_quadratic_score
+from llmode.euclidean_score import evaluate_system_euclidean_distance
 
 
 def load_function_from_log(
@@ -436,19 +436,21 @@ def main():
         observed_df = pd.read_csv(observed_data_path)
         std_params = compute_standardization_params(observed_df, biomarker_names)
         s_obs = compute_summary_stats_from_df(
-            observed_df,
+            df=observed_df,
             biomarker_cols=biomarker_names,
             std_params=std_params,
             subject_col="subject_id",
             episode_col="hadm_id",
             time_col="hours_from_admission",
             verbose=False,
+            standardization=False,
         )
         s_sim = compute_summary_stats(
             trajectories=trajectories,
             t_eval=t_eval,
             biomarker_names=biomarker_names,
             std_params=std_params,
+            standardization=False,
         )
         stat_names = get_stat_names(biomarker_names)
 
@@ -466,13 +468,13 @@ def main():
     else:
         print(f"\nObserved data file not found at {observed_data_path}; skipping summary stats comparison.")
 
-    # Compute quadratic summary-statistics score (if parameter priors are available).
+    # Compute Euclidean summary-statistics distance (if parameter priors are available).
     # For torch-based systems, ensure we use the torch simulator backend so that
     # the trajectories used for scoring are consistent with those used for
     # visualization and centralized evaluation.
     if param_distributions is not None:
         quad_backend = "gpu" if getattr(wrapped_system_func, "_torch_backend", False) else "cpu"
-        quadratic = evaluate_system_quadratic_score(
+        distance = evaluate_system_euclidean_distance(
             system_func=wrapped_system_func,
             problem_name=args.problem_name,
             param_distributions=param_distributions,
@@ -480,10 +482,10 @@ def main():
             sample_order=args.sample_order,
             backend=quad_backend,
         )
-        if quadratic is not None:
-            print(f"Quadratic summary-statistics score: {quadratic:.2f}")
+        if distance is not None:
+            print(f"Euclidean summary-statistics distance: {distance:.2f}")
         else:
-            print("Quadratic summary-statistics score: None")
+            print("Euclidean summary-statistics distance: None")
         print(64*'=')
     else:
         print("No parameter distributions provided; skipping quadratic score evaluation.")

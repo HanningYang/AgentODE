@@ -308,17 +308,15 @@ def build_param_optimization_prompt(
 
       MODE_IMPLAUSIBLE + implausibility report  (if mode == 'implausible')
       or
-      MODE_LOG_SL + SL feedback                 (if mode == 'log_sl')
+      MODE_LOG_SL template content + SL feedback (Top 5 Problems etc.) (if mode == 'log_sl')
 
       COMMON_INSTRUCTIONS_AFTER
     """
     sections = _load_opt_sections(problem_name)
     before = sections.get("COMMON_INSTRUCTIONS_BEFORE", "")
     after = sections.get("COMMON_INSTRUCTIONS_AFTER", "")
-    if mode == "implausible":
-        middle = sections.get("MODE_IMPLAUSIBLE", "")
-    else:
-        middle = sections.get("MODE_LOG_SL", "")
+    implausible_section = sections.get("MODE_IMPLAUSIBLE", "")
+    log_sl_section = sections.get("MODE_LOG_SL", "")
 
     # Build parameter table without the name column (some parameters may not
     # have clear names); include rationale as a final column.
@@ -354,9 +352,11 @@ def build_param_optimization_prompt(
     # 2) Insert parameter table under the existing "Current parameter distributions" heading.
     param_marker = "Current parameter distributions (lognormal, values in linear space)"
     if param_marker in prompt_before:
+        # Insert the parameter table and ensure two blank lines after it
+        # before the next section (e.g., MODE_IMPLAUSIBLE / MODE_LOG_SL).
         prompt_before = prompt_before.replace(
             param_marker,
-            param_marker + "\n\n" + param_block,
+            param_marker + "\n\n" + param_block + "\n\n",
             1,
         )
     else:
@@ -369,10 +369,13 @@ def build_param_optimization_prompt(
         )
 
     parts: list[str] = []
-    if prompt_before.strip():
-        parts.append(prompt_before.strip())
+    if prompt_before:
+        # Preserve internal trailing newlines after the parameter table so
+        # that there is visible spacing before the mode-specific sections.
+        parts.append(prompt_before)
 
     if mode == "implausible":
+        middle = implausible_section or ""
         if middle.strip():
             parts.append(middle)
             parts.append("")
@@ -382,12 +385,13 @@ def build_param_optimization_prompt(
             parts.append(implaus_report.strip())
             parts.append("")
     else:
+        # In log_sl mode, first include the MODE_LOG_SL template content,
+        # then append the SL feedback (which contains the Top 5 Problems).
+        middle = log_sl_section or ""
         if middle.strip():
             parts.append(middle)
             parts.append("")
         if sl_feedback:
-            # Template already contains the heading "Current best result and
-            # failure modes"; just append the feedback text.
             parts.append(sl_feedback.strip())
             parts.append("")
 
@@ -626,214 +630,34 @@ def get_default_param_distributions(problem_name: str) -> Dict[str, Any] | None:
     """
     if problem_name == 'aki':
         # Defaults for the 3-biomarker AKI system (Creatinine, BUN, Potassium)
-        # with a latent recovery process R. These are interpreted as linear-space
-        # means/SDs for lognormal sampling downstream.
-        # Original defaults (commented out for reference):
-        # return {
-        #     "0": {"mean": 0.25, "sd": 0.18, "rationale": "Initial effective clearance in hospitalized AKI is often markedly reduced but variable, so R_min is centered low with broad spread while remaining physiologically plausible."},
-        #     "1": {"mean": 0.80, "sd": 0.20, "rationale": "Most patients partially recover toward near-normal clearance within a week but not always fully, so R_max is centered below 1 with moderate variability."},
-        #     "2": {"mean": 0.015, "sd": 0.010, "rationale": "A recovery rate of ~0.015 1/h implies a 2–4 day timescale consistent with observed 7-day improvement while allowing slower/faster recoveries."},
-        #     "3": {"mean": 0.008, "sd": 0.006, "rationale": "Net creatinine input is kept small so Cr dynamics are primarily clearance-driven, but variability allows catabolic states or muscle mass effects to shift trajectories."},
-        #     "4": {"mean": 0.050, "sd": 0.025, "rationale": "Renal Cr clearance coefficient is set so typical effective decay rates (k_CrR·R) yield ~1–3 day relaxation toward Cr_ref over 168 hours."},
-        #     "5": {"mean": 0.004, "sd": 0.003, "rationale": "Nonrenal Cr clearance is small relative to renal clearance but nonzero to prevent unrealistically persistent elevations when R is very low."},
-        #     "6": {"mean": 1.00, "sd": 0.35, "rationale": "Cr_ref represents an individual's baseline setpoint (often ~0.7–1.3 mg/dL) with moderate spread for age/sex/muscle mass differences."},
-        #     "7": {"mean": 0.060, "sd": 0.040, "rationale": "BUN production is allowed to be meaningfully positive (catabolism/protein load) with wide variability to permit slow or absent BUN decline despite improving clearance."},
-        #     "8": {"mean": 0.008, "sd": 0.004, "rationale": "Renal BUN clearance is set lower than Cr to produce slower, more gradual BUN recovery over days rather than rapid normalization."},
-        #     "9": {"mean": 0.0015, "sd": 0.0010, "rationale": "Nonrenal BUN loss is small (e.g., GI losses/dialysis-unmodeled effects) but included to avoid implausibly static BUN in low-R scenarios."},
-        #     "10": {"mean": 16.0, "sd": 6.0, "rationale": "BUN_ref is centered near normal range with enough spread to capture baseline differences from diet, liver function, and chronic comorbidity."},
-        #     "11": {"mean": 4.10, "sd": 0.25, "rationale": "K_ref is tightly centered around physiologic setpoint to reflect homeostatic control while permitting patient-level variation (meds, acid-base status)."},
-        #     "12": {"mean": 0.35, "sd": 0.20, "rationale": "Extrarenal buffering is fast (hours; ~0.35 1/h) to keep potassium nearly flat despite perturbations, with variability for insulin/catecholamine effects."},
-        #     "13": {"mean": 0.060, "sd": 0.035, "rationale": "Renal K excretion gain is moderate so that improving R adds stabilization over 1–2 days without dominating the rapid buffering term."},
-        #     "14": {"mean": 0.010, "sd": 0.010, "rationale": "Baseline retention/shift source is small (mmol/L/h) so potassium does not drift excessively, but can rise modestly when R is low."},
-        #     "15": {"mean": 0.0020, "sd": 0.0020, "rationale": "Creatinine-coupled severity on K is kept weak so even large Cr elevations only add modest K load, yet variability allows occasional clinically relevant hyperkalemic tendency."},
-        #     "16": {"mean": 0.00030, "sd": 0.00030, "rationale": "BUN-coupled severity on K is smaller per unit than Cr to prevent unrealistically large K forcing from high BUN while allowing uremic severity to contribute."},
-        #     "17": {"mean": 2.0, "sd": 0.8, "rationale": "Creatinine severity threshold is near the cohort's early values so only above-moderate AKI amplifies K shifts, with spread for baseline CKD vs de novo AKI."},
-        #     "18": {"mean": 30.0, "sd": 10.0, "rationale": "BUN severity threshold is set around mild elevation so K coupling activates primarily in more uremic patients, with wide spread for nutritional/catabolic differences."},
-        # }
         return {
-            "0": {"mean": 0.15, "sd": 0.15, "rationale": "Increased SD to allow wider range of initial renal impairment severity."},
-            "1": {"mean": 1.05, "sd": 0.3, "rationale": "Increased SD to accommodate greater variability in maximal recovery capacity."},
-            "2": {"mean": 0.005, "sd": 0.006, "rationale": "Slightly lower mean recovery rate to slow BUN decline trend; increased SD for diversity."},
-            "3": {"mean": 0.07, "sd": 0.05, "rationale": "Increased SD for more inter-patient variability in Cr production."},
-            "4": {"mean": 0.1, "sd": 0.08, "rationale": "Increased SD to vary renal Cr clearance capacity across patients."},
-            "5": {"mean": 0.015, "sd": 0.015, "rationale": "Increased SD for variability in non-renal Cr clearance."},
-            "6": {"mean": 0.5, "sd": 0.3, "rationale": "Increased SD to vary clearance threshold across patients."},
-            "7": {"mean": 0.6, "sd": 0.4, "rationale": "Increased mean and SD to raise BUN levels and widen spread, countering over-rapid decline."},
-            "8": {"mean": 0.03, "sd": 0.04, "rationale": "Lower mean renal BUN clearance to reduce downward trend; increased SD for variability."},
-            "9": {"mean": 0.008, "sd": 0.008, "rationale": "Increased SD for non-renal BUN clearance variability."},
-            "10": {"mean": 4.0, "sd": 2.5, "rationale": "Increased SD to vary BUN reference level across patients."},
-            "11": {"mean": 4.0, "sd": 0.5, "rationale": "Increased SD for inter-patient variability in K+ homeostatic set-point."},
-            "12": {"mean": 0.12, "sd": 0.08, "rationale": "Increased mean buffering rate to reduce K+ autocorrelation (more fluctuations)."},
-            "13": {"mean": 0.15, "sd": 0.18, "rationale": "Lower mean renal K+ excretion to reduce over-regulation; increased SD for variability."},
-            "14": {"mean": 0.04, "sd": 0.03, "rationale": "Increased baseline K+ release from impaired renal function to raise K+ variability."},
-            "15": {"mean": 0.006, "sd": 0.005, "rationale": "Increased SD for variable Cr-driven K+ release strength."},
-            "16": {"mean": 0.0015, "sd": 0.0012, "rationale": "Increased SD for variable BUN-driven K+ release."},
-            "17": {"mean": 4.0, "sd": 2.0, "rationale": "Increased SD for patient-specific Cr severity triggers."},
-            "18": {"mean": 40.0, "sd": 20.0, "rationale": "Increased SD for variable BUN severity thresholds."},
-            "19": {"mean": 2.0, "sd": 2.0, "rationale": "Increased SD to vary Cr inhibition sensitivity on recovery."},
-            "20": {"mean": 3.0, "sd": 1.5, "rationale": "Increased SD for variable Cr inhibition threshold."},
-            "21": {"mean": 0.1, "sd": 0.1, "rationale": "Increased SD to vary BUN inhibition steepness on recovery."},
-            "22": {"mean": 50.0, "sd": 25.0, "rationale": "Increased SD for variable BUN inhibition threshold."},
-            "23": {"mean": 5.0, "sd": 4.0, "rationale": "Increased SD to vary Cr clearance saturation nonlinearity."},
-            "24": {"mean": 5.5, "sd": 1.0, "rationale": "Increased SD for variable hyperkalemia catabolism threshold."},
-            "25": {"mean": 0.05, "sd": 0.04, "rationale": "Increased SD for variable hyperkalemia-urea coupling."},
-            "26": {"mean": 1.5, "sd": 1.0, "rationale": "Increased SD to vary K+ excretion saturation."},
-            "27": {"mean": 100.0, "sd": 80.0, "rationale": "Increased SD for variable recovery saturation timing."},
-            "28": {"mean": 3.0, "sd": 2.0, "rationale": "Increased SD for variable Cr threshold for urea boost."},
-            "29": {"mean": 0.1, "sd": 0.08, "rationale": "Increased SD for variable Cr-urea coupling."},
-            "30": {"mean": 2.0, "sd": 2.5, "rationale": "Lower mean K+ inhibition steepness on BUN clearance to reduce over-inhibition; increased SD."},
-            "31": {"mean": 5.2, "sd": 0.8, "rationale": "Increased SD for variable K+ inhibition threshold on BUN clearance."},
-            "32": {"mean": 0.05, "sd": 0.04, "rationale": "Increased SD for variable BUN impairment on K+ buffering."},
-            "33": {"mean": 60.0, "sd": 30.0, "rationale": "Increased SD for variable BUN impairment threshold."},
-            "34": {"mean": 5.0, "sd": 1.0, "rationale": "Increased SD for variable K+ threshold for muscle catabolism."},
-            "35": {"mean": 0.02, "sd": 0.02, "rationale": "Increased SD for variable hyperkalemia-Cr production coupling."},
-            "36": {"mean": 4.0, "sd": 2.0, "rationale": "Increased SD for variable Cr threshold for acidosis-driven K+ shift."},
-            "37": {"mean": 0.01, "sd": 0.01, "rationale": "Increased SD for variable acidosis-K+ coupling."},
+            "0": {"mean": 0.05, "sd": 0.04, "rationale": "Lower minimum renal function to increase baseline Cr/BUN, helping correct Cr quantile location."},
+            "1": {"mean": 1.1, "sd": 0.3, "rationale": "Slightly higher max renal function with more variability to increase Cr spread and reduce potassium autocorrelation."},
+            "2": {"mean": 0.003, "sd": 0.002, "rationale": "Reduced recovery rate to weaken systematic downward trends in all biomarkers."},
+            "3": {"mean": 0.03, "sd": 0.02, "rationale": "Lower Cr production to reduce baseline creatinine toward observed quantiles."},
+            "4": {"mean": 0.15, "sd": 0.08, "rationale": "Increased renal Cr clearance to lower Cr baseline and increase spread via injury feedback variability."},
+            "5": {"mean": 0.015, "sd": 0.012, "rationale": "Reduced non-renal Cr clearance mean but kept wide SD to maintain inter-patient variability in baseline."},
+            "6": {"mean": 0.8, "sd": 0.4, "rationale": "Lower reference Cr with wider SD to accommodate diverse patient baselines and increase Cr spread."},
+            "7": {"mean": 0.25, "sd": 0.15, "rationale": "Lower BUN production to reduce baseline and weaken downward population trend."},
+            "8": {"mean": 0.08, "sd": 0.05, "rationale": "Reduced renal BUN clearance to weaken excessive downward trend in BUN and coupled K."},
+            "9": {"mean": 0.015, "sd": 0.012, "rationale": "Reduced non-renal BUN clearance mean but kept wide SD to maintain variability."},
+            "10": {"mean": 12.0, "sd": 6.0, "rationale": "Lower BUN reference with wider SD to increase spread and accommodate heterogeneous set-points."},
+            "11": {"mean": 4.2, "sd": 0.6, "rationale": "Slightly higher K set-point with wider SD to increase potassium variability and reduce autocorrelation."},
+            "12": {"mean": 0.8, "sd": 0.3, "rationale": "Increased K buffering rate to accelerate potassium fluctuations and reduce lag-1 autocorrelation."},
+            "13": {"mean": 0.04, "sd": 0.025, "rationale": "Reduced renal K excretion rate to weaken excessive downward population trend in potassium."},
+            "14": {"mean": 0.04, "sd": 0.02, "rationale": "Increased baseline K release from impaired renal function to counteract excessive downward trend."},
+            "15": {"mean": 0.003, "sd": 0.0025, "rationale": "Reduced K sensitivity to Cr to moderate injury-driven K release, aiding trend correction."},
+            "16": {"mean": 0.0006, "sd": 0.0004, "rationale": "Reduced K sensitivity to BUN to further moderate injury-driven K release."},
+            "17": {"mean": 2.5, "sd": 1.0, "rationale": "Lower Cr severity threshold with wider SD to increase patient heterogeneity in injury response."},
+            "18": {"mean": 35.0, "sd": 18.0, "rationale": "Lower BUN severity threshold with wider SD to increase heterogeneity in urea-driven K release."},
+            "19": {"mean": 1.2, "sd": 0.7, "rationale": "Lower Cr injury threshold with wider SD to increase inter-patient variability in injury onset timing."},
+            "20": {"mean": 25.0, "sd": 15.0, "rationale": "Lower BUN injury threshold with wider SD to increase variability in injury feedback dynamics."},
+            "21": {"mean": 0.12, "sd": 0.1, "rationale": "Slightly reduced injury feedback strength mean but increased SD to allow both smooth and dynamic trajectories across patients."},
+            "22": {"mean": 0.3, "sd": 0.25, "rationale": "Reduced Cr saturation coefficient to allow more clearance variability, reducing Cr autocorrelation and increasing spread."},
+            "23": {"mean": 0.02, "sd": 0.018, "rationale": "Slightly reduced BUN reabsorption to moderate upward pressure on BUN baseline while keeping variability."},
+            "24": {"mean": 0.001, "sd": 0.0008, "rationale": "Reduced acidosis-driven K shift to further weaken excessive downward potassium trend."},
         }
 
-        # Second option for 3 variables scenario - Defaults for the 5-biomarker
-        # AKI system (Creatinine, BUN, Potassium, Sodium, Hemoglobin) with a
-        # latent injury process.
-        #
-        # return {
-        #     "0": {
-        #         "mean": 0.03,
-        #         "sd": 0.015,
-        #         "rationale": "Represents hourly creatinine generation from muscle metabolism, scaled for adult body mass.",
-        #     },
-        #     "1": {
-        #         "mean": 0.06,
-        #         "sd": 0.03,
-        #         "rationale": "Baseline reciprocal of creatinine's elimination time constant (approx. 16.7 hours for normal GFR).",
-        #     },
-        #     "2": {
-        #         "mean": 0.8,
-        #         "sd": 0.4,
-        #         "rationale": "Hourly urea nitrogen generation from protein catabolism, scaled for typical AKI catabolic state.",
-        #     },
-        #     "3": {
-        #         "mean": 0.07,
-        #         "sd": 0.035,
-        #         "rationale": "Baseline reciprocal of BUN's elimination time constant, reflecting renal clearance.",
-        #     },
-        #     "4": {
-        #         "mean": 0.025,
-        #         "sd": 0.01,
-        #         "rationale": "Hourly net potassium influx from diet and cellular shifts in AKI.",
-        #     },
-        #     "5": {
-        #         "mean": 0.05,
-        #         "sd": 0.025,
-        #         "rationale": "Baseline reciprocal of potassium's renal excretion time constant.",
-        #     },
-        #     "6": {
-        #         "mean": 0.008,
-        #         "sd": 0.004,
-        #         "rationale": "Injury growth rate yielding sub-maximal injury over 3-5 days on an hourly scale.",
-        #     },
-        #     "7": {
-        #         "mean": 1.2,
-        #         "sd": 0.5,
-        #         "rationale": "Maximum injury burden, an order-one scaling factor modulating clearance loss.",
-        #     },
-        #     "8": {
-        #         "mean": 0.5,
-        #         "sd": 0.2,
-        #         "rationale": "Sensitivity of clearance loss to injury, allowing for partial (not total) GFR loss.",
-        #     },
-        #     "9": {
-        #         "mean": 0.002,
-        #         "sd": 0.001,
-        #         "rationale": "Coupling coefficient for sodium's influence on potassium, kept small to prevent runaway feedback.",
-        #     },
-        #     "10": {
-        #         "mean": 138.0,
-        #         "sd": 2.5,
-        #         "rationale": "Sodium homeostatic set point within normal physiological range.",
-        #     },
-        #     "11": {
-        #         "mean": 0.02,
-        #         "sd": 0.01,
-        #         "rationale": "Reciprocal of sodium correction time constant (approx. 2-3 days) for dilutional changes.",
-        #     },
-        #     "12": {
-        #         "mean": 0.015,
-        #         "sd": 0.0075,
-        #         "rationale": "Reciprocal of hemoglobin recovery time constant (approx. 3-4 days) accounting for hemodilution and EPO response.",
-        #     },
-        #     "13": {
-        #         "mean": 12.5,
-        #         "sd": 1.5,
-        #         "rationale": "Hemoglobin homeostatic set point for a hospitalized adult with potential hemodilution.",
-        #     },
-        # }
-
-        # Legacy defaults for earlier 3-biomarker AKI systems (Creatinine,
-        # BUN, Potassium) without explicit Sodium/Hemoglobin states. Kept
-        # for reference only; not used in the current 5-variable setup.
-        #
-        # legacy_defaults_aki_3var = {
-        #     "0": {
-        #         "mean": 0.01,
-        #         "sd": 0.006,
-        #         "rationale": "Creatinine production is relatively constant at ~0.01 mg/dL/h in adults, reflecting steady muscle metabolism, with moderate physiological variability.",
-        #     },
-        #     "1": {
-        #         "mean": 0.02,
-        #         "sd": 0.012,
-        #         "rationale": "Creatinine clearance is reduced in AKI; typical baseline clearance is ~0.02 mL/min/kg, converted to proportional scaling for 7-day dynamics with plausible variation.",
-        #     },
-        #     "2": {
-        #         "mean": 0.5,
-        #         "sd": 0.15,
-        #         "rationale": "BUN production is approximately 0.5 mg/dL/h from dietary protein metabolism, consistent with normal to mildly elevated rates in hospitalized adults.",
-        #     },
-        #     "3": {
-        #         "mean": 0.04,
-        #         "sd": 0.016,
-        #         "rationale": "BUN clearance scales with renal function; typical value reflects reduced but non-zero excretion in AKI, with variability due to patient-specific factors.",
-        #     },
-        #     "4": {
-        #         "mean": 0.3,
-        #         "sd": 0.12,
-        #         "rationale": "Potassium influx from diet and cellular turnover is ~0.3 mmol/L/h, accounting for steady input with expected physiological variation in hospitalized patients.",
-        #     },
-        #     "5": {
-        #         "mean": 0.06,
-        #         "sd": 0.018,
-        #         "rationale": "Potassium excretion is impaired in AKI; the baseline clearance coefficient is ~0.06 L/h, consistent with reduced renal handling and moderate uncertainty.",
-        #     },
-        #     "6": {
-        #         "mean": 0.01,
-        #         "sd": 0.006,
-        #         "rationale": "Creatinine's contribution to impairment feedback is moderate; a linear coefficient of ~0.01 reflects its role in signaling renal dysfunction with plausible physiological weight.",
-        #     },
-        #     "7": {
-        #         "mean": 1.0,
-        #         "sd": 0.2,
-        #         "rationale": "Baseline creatinine level at which impairment feedback is neutral is set at 1.0 mg/dL, representing normal baseline in adults aged 50–64.",
-        #     },
-        #     "8": {
-        #         "mean": 0.02,
-        #         "sd": 0.012,
-        #         "rationale": "BUN's contribution to impairment feedback is stronger than creatinine due to urea's high concentration; coefficient ~0.02 captures its greater pathophysiological impact.",
-        #     },
-        #     "9": {
-        #         "mean": 15.0,
-        #         "sd": 3.0,
-        #         "rationale": "Baseline BUN at which feedback is neutral is ~15 mg/dL, reflecting mild-to-moderate accumulation in early AKI without severe uremia.",
-        #     },
-        #     "10": {
-        #         "mean": 0.05,
-        #         "sd": 0.03,
-        #         "rationale": "Potassium's contribution to impairment feedback is significant due to its role in cellular homeostasis and toxicity; coefficient ~0.05 captures its sensitivity.",
-        #     },
-        #     "11": {
-        #         "mean": 4.5,
-        #         "sd": 0.6,
-        #         "rationale": "Baseline potassium level for neutral feedback is set at 4.5 mmol/L, representing normal homeostasis in adults and accounting for early AKI-related shifts.",
-        #     },
-        # }
 
     return None
 

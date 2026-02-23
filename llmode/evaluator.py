@@ -463,11 +463,7 @@ class Evaluator:
 
                     
         else:
-            # Centralized evaluation path: use synthetic likelihood against
-            # observed summary statistics and optionally iterate to optimize
-            # parameter priors for this specific ODE structure. Wrap this whole
-            # flow in a local sandbox so that any error only invalidates this
-            # structure rather than crashing the entire run.
+            # Centralized evaluation path
             try:
                 from llmode import synthetic_likelihood
                 from llmode import param_utils
@@ -516,9 +512,6 @@ class Evaluator:
                 if rel_thresh <= 0.0:
                     rel_thresh = 0.1
 
-                # If no parameter priors are available yet (e.g., centralized AKI
-                # problems), run an initial parameter-inference call using the
-                # base spec_parameters_{problem}.txt template.
                 if param_distributions is None and config_obj is not None:
                     try:
                         from llmode import param_utils as _param_utils_init
@@ -561,18 +554,18 @@ class Evaluator:
                     #     f"[Centralized evaluation] Sample {sample_order}: "
                     #     f"logSL={score if score is not None else 'None'} (no optimization)."
                     # )
-                    # After evaluating log synthetic likelihood, compute a quadratic
-                    # summary-statistics score for comparing ODE structures using the
-                    # final parameter distributions.
+                    # After evaluating log synthetic likelihood, compute a Euclidean
+                    # summary-statistics distance for comparing ODE structures using
+                    # the final parameter distributions.
                     if (
                         score is not None
                         and np.isfinite(score)
                         and param_distributions is not None
                     ):
                         try:
-                            from llmode import quadratic_score as _quadratic_score
+                            from llmode import euclidean_score as _euclidean_score
 
-                            quad = _quadratic_score.evaluate_system_quadratic_score(
+                            dist = _euclidean_score.evaluate_system_euclidean_distance(
                                 system_func=system_func,
                                 problem_name=problem_name,
                                 param_distributions=param_distributions,
@@ -582,16 +575,14 @@ class Evaluator:
                             )
                         except Exception as e:
                             print(
-                                f"[Centralized evaluation] Failed to compute quadratic score: {e}"
+                                f"[Centralized evaluation] Failed to compute Euclidean distance: {e}"
                             )
-                            quad = None
+                            dist = None
 
-                        if quad is not None and np.isfinite(quad):
-                            scores_per_test['quadratic_score'] = round(float(quad), 2)
+                        if dist is not None and np.isfinite(dist):
+                            scores_per_test['euclidean_distance'] = round(float(dist), 2)
                 else:
-                    # Full optimization loop over parameter priors for this structure,
-                    # with early stopping based on relative logSL improvement and
-                    # consecutive null-score attempts.
+                    # Full optimization loop over parameter priors for this structure
                     best_params: dict[str, Any] = param_distributions
                     best_score: float | None = None
                     best_feedback: str | None = None
@@ -697,13 +688,17 @@ class Evaluator:
                                 problem_name=problem_name,
                             )
                             null_score_count += 1
-                            no_improve_count = 0
+                            # Treat a null score as "no improvement" if we
+                            # already have a finite best_score; only avoid
+                            # counting when we have never seen a valid score.
                             if best_score is None:
-                                # When all candidates so far have null scores, keep
-                                # the *latest* candidate info, as requested.
+                                # When all candidates so far have null scores, keep the *latest* candidate info
                                 best_params = new_params
                                 best_implaus = new_implaus
                                 best_feedback = None
+                                no_improve_count = 0
+                            else:
+                                no_improve_count += 1
                             if DEBUG_PRINTS:
                                 print(
                                     f"[Param optimization] Sample {sample_order}: "
@@ -724,7 +719,6 @@ class Evaluator:
                             else:
                                 improvement = new_score_val - best_score
                                 if improvement <= 0.0:
-                                    # Worse or equal score: definitely no improvement.
                                     no_improve_count += 1
                                 else:
                                     # Relative improvement measured against the scale of
@@ -785,15 +779,14 @@ class Evaluator:
                     kwargs['param_distributions'] = final_params
                     new_function.param_distributions = final_params
 
-                    # After finishing logSL-based parameter optimization, compute a
-                    # quadratic summary-statistics score using the final parameter
+                    # Compute a Euclidean summary-statistics distance using the final parameter
                     # distributions so that ODE structures can be compared on a
-                    # common quadratic scale.
+                    # common distance scale.
                     if param_distributions is not None:
                         try:
-                            from llmode import quadratic_score as _quadratic_score
+                            from llmode import euclidean_score as _euclidean_score
 
-                            quad = _quadratic_score.evaluate_system_quadratic_score(
+                            dist = _euclidean_score.evaluate_system_euclidean_distance(
                                 system_func=system_func,
                                 problem_name=problem_name,
                                 param_distributions=param_distributions,
@@ -803,12 +796,12 @@ class Evaluator:
                             )
                         except Exception as e:
                             print(
-                                f"[Param optimization] Failed to compute quadratic score: {e}"
+                                f"[Param optimization] Failed to compute Euclidean distance: {e}"
                             )
-                            quad = None
+                            dist = None
 
-                        if quad is not None and np.isfinite(quad):
-                            scores_per_test['quadratic_score'] = round(float(quad), 2)
+                        if dist is not None and np.isfinite(dist):
+                            scores_per_test['euclidean_distance'] = round(float(dist), 2)
             except Exception as e:
                 prefix = f"Sample {sample_order}: " if sample_order is not None else ""
                 print(f"{prefix}[Centralized evaluation] Failed with error: {e}")

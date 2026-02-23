@@ -10,80 +10,90 @@ plausible interactions among the following biomarkers:
 
 The time units is in hours.
 
-HARD CONSTRAINT: The parameter array has exactly MAX_NPARAMS = 40 slots (indices 0–39).
-You may use ONLY params[0] through params[39]. You must count every index you assign.
-The total number of distinct indices used must be <= 40.
+HARD CONSTRAINT: The parameter array has exactly MAX_NPARAMS = 25 slots (indices 0–24).
 If you need a new parameter, you must REUSE or REMOVE an existing one.
-Do NOT introduce any params[k] with k >= 40 under any circumstances.
+Do NOT introduce any params[k] with k >= 25 under any circumstances.
 """
 
 import torch
 
 # Initialize parameters
-MAX_NPARAMS = 40
+MAX_NPARAMS = 25
 params = torch.ones(MAX_NPARAMS)
 
 
 @system.evolve
 def system(biomarkers: torch.Tensor, params: torch.Tensor, t: float) -> torch.Tensor:
     """Symbolic skeleton for a 3-variable AKI ODE system.
+
     Args:
         biomarkers: A torch tensor containing
             [Creatinine, BUN, Potassium].
-        params: Array of numeric constants or parameters to be optimized.
+        params: Tensor of numeric constants or parameters to be optimized.
+                You must not use any params[k] with k >= MAX_NPARAMS;
+                using more than 25 parameters is invalid.
     Returns:
         A torch tensor representing the temporal derivatives (d/dt)
         of the biomarkers.
     """
+    # Support both shape (3,) and (batch, 3) by indexing last dim.
     Cr = biomarkers[..., 0]
     BUN = biomarkers[..., 1]
     K = biomarkers[..., 2]
 
-    # Renal recovery with injury feedback and time-dependent saturation
-    R_min, R_max, k_rec = params[..., 0], params[..., 1], params[..., 2]
-    inhib_Cr = torch.sigmoid(params[..., 19] * (Cr - params[..., 20]))
-    inhib_BUN = torch.sigmoid(params[..., 21] * (BUN - params[..., 22]))
-    recovery_rate = k_rec * (1.0 - 0.5 * (inhib_Cr + inhib_BUN))
-    R_sat = params[..., 27]
-    R_raw = R_min + (R_max - R_min) * (1.0 - torch.exp(-recovery_rate * t))
-    R = R_raw * torch.exp(-t / R_sat) + R_max * (1.0 - torch.exp(-t / R_sat))
-    R = torch.clamp(R, 0.0, 1.5)
+    # ---- Renal recovery with injury feedback ----
+    R_min = params[..., 0]
+    R_max = params[..., 1]
+    k_rec = params[..., 2]
 
-    # Creatinine: saturated clearance + muscle breakdown feedback
-    p_Cr, k_CrR, k_CrNR = params[..., 3], params[..., 4], params[..., 5]
-    Cr_ref, sat_Cr = params[..., 6], params[..., 23]
-    clearance_Cr = (k_CrNR + k_CrR * R) * (Cr - Cr_ref) / (1.0 + (Cr - Cr_ref) / sat_Cr)
-    # Add muscle catabolism term driven by hyperkalemia
-    cat_Cr = torch.clamp(K - params[..., 34], min=0.0) * params[..., 35]
-    dCr = p_Cr + cat_Cr - clearance_Cr
+    injury_Cr = torch.clamp(Cr - params[..., 19], min=0.0) / (params[..., 19] + 1e-6)
+    injury_BUN = torch.clamp(BUN - params[..., 20], min=0.0) / (params[..., 20] + 1e-6)
+    injury = torch.clamp(params[..., 21] * (injury_Cr + injury_BUN), min=0.0, max=0.9)
 
-    # BUN: catabolic boost from hyperkalemia and high Cr, clearance inhibition by hyperkalemia
-    p_BUN_base, k_BUNR, k_BUNNR = params[..., 7], params[..., 8], params[..., 9]
-    BUN_ref, K_cat_thresh = params[..., 10], params[..., 24]
-    cat_boost_K = torch.clamp(K - K_cat_thresh, min=0.0) * params[..., 25]
-    cat_boost_Cr = torch.clamp(Cr - params[..., 28], min=0.0) * params[..., 29]
-    p_BUN = p_BUN_base + cat_boost_K + cat_boost_Cr
-    K_inhib = torch.sigmoid(params[..., 30] * (K - params[..., 31]))
-    effective_R_BUN = R * (1.0 - 0.3 * K_inhib)
-    dBUN = p_BUN - (k_BUNNR + k_BUNR * effective_R_BUN) * (BUN - BUN_ref)
+    R_base = R_min + (R_max - R_min) * (1.0 - torch.exp(-k_rec * t))
+    R = torch.clamp(R_base * (1.0 - injury), min=0.05, max=1.2)
 
-    # Potassium: saturated renal excretion, buffering impaired by uremia, cellular release
-    K_ref, k_Kbuf, k_KR = params[..., 11], params[..., 12], params[..., 13]
-    s_K0, s_Kcr, s_Kbun = params[..., 14], params[..., 15], params[..., 16]
-    Cr_sev0, BUN_sev0 = params[..., 17], params[..., 18]
-    sev = (torch.clamp(Cr - Cr_sev0, min=0.0) * s_Kcr +
-           torch.clamp(BUN - BUN_sev0, min=0.0) * s_Kbun)
-    K_exc_sat = params[..., 26]
-    renal_exc = (k_KR * R) * (K - K_ref) / (1.0 + (K - K_ref) / K_exc_sat)
-    buf_impair = torch.sigmoid(params[..., 32] * (BUN - params[..., 33]))
-    effective_k_Kbuf = k_Kbuf * (1.0 - 0.4 * buf_impair)
-    # Add acidosis-driven shift from hypercatabolism (Cr-linked)
-    acid_shift = torch.clamp(Cr - params[..., 36], min=0.0) * params[..., 37]
+    # ---- Creatinine ----
+    p_Cr = params[..., 3]
+    k_CrR = params[..., 4]
+    k_CrNR = params[..., 5]
+    Cr_ref = params[..., 6]
+    sat_Cr = 1.0 / (1.0 + params[..., 22] * torch.clamp(Cr - Cr_ref, min=0.0))
+    dCr = p_Cr - (k_CrNR + k_CrR * R * sat_Cr) * (Cr - Cr_ref)
+
+    # ---- BUN ----
+    p_BUN = params[..., 7]
+    k_BUNR = params[..., 8]
+    k_BUNNR = params[..., 9]
+    BUN_ref = params[..., 10]
+    reabs = params[..., 23] * (1.0 - torch.clamp(R, min=0.2, max=1.0)) * (BUN - BUN_ref)
+    dBUN = p_BUN - (k_BUNNR + k_BUNR * R) * (BUN - BUN_ref) + reabs
+
+    # ---- Potassium ----
+    K_ref = params[..., 11]
+    k_Kbuf = params[..., 12]
+    k_KR = params[..., 13]
+    s_K0 = params[..., 14]
+    s_Kcr = params[..., 15]
+    s_Kbun = params[..., 16]
+    Cr_sev0 = params[..., 17]
+    BUN_sev0 = params[..., 18]
+
+    acid_shift = (
+        params[..., 24]
+        * torch.clamp(BUN - BUN_sev0, min=0.0)
+        * (K_ref - K)
+    )
+    sev = (
+        torch.clamp(Cr - Cr_sev0, min=0.0) * s_Kcr
+        + torch.clamp(BUN - BUN_sev0, min=0.0) * s_Kbun
+    )
+    renal_excretion = k_KR * R * torch.clamp(K - K_ref, min=0.0)
+
     dK = (
-        - effective_k_Kbuf * (K - K_ref)
-        - renal_exc
-        + (1.0 - torch.clamp(R, 0.0, 1.0)) * s_K0
-        + (1.0 - torch.clamp(R, 0.0, 1.0)) * sev
+        -k_Kbuf * (K - K_ref)
+        - renal_excretion
+        + (1.0 - torch.clamp(R, min=0.0, max=1.0)) * (s_K0 + sev)
         + acid_shift
     )
 
