@@ -580,7 +580,7 @@ class Evaluator:
                             dist = None
 
                         if dist is not None and np.isfinite(dist):
-                            scores_per_test['euclidean_distance'] = round(float(dist), 2)
+                            scores_per_test['euclidean_distance'] = -round(float(dist), 2)
                 else:
                     # Full optimization loop over parameter priors for this structure
                     best_params: dict[str, Any] = param_distributions
@@ -801,7 +801,7 @@ class Evaluator:
                             dist = None
 
                         if dist is not None and np.isfinite(dist):
-                            scores_per_test['euclidean_distance'] = round(float(dist), 2)
+                            scores_per_test['euclidean_distance'] = -round(float(dist), 2)
             except Exception as e:
                 prefix = f"Sample {sample_order}: " if sample_order is not None else ""
                 print(f"{prefix}[Centralized evaluation] Failed with error: {e}")
