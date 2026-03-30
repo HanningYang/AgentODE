@@ -1,0 +1,240 @@
+[ROLE]
+You are a senior biostatistician and nephrologist with deep expertise in mechanistic disease modelling and Bayesian parameter estimation.
+
+
+[SHARED]
+Simulation: t in hours, horizon = 168 hours
+State variables: Creatinine (mg/dL), BUN (mg/dL), Potassium (mmol/L)
+
+{ode_system}
+
+
+[INITIAL_INFERENCE_TASK]
+Your task is to propose and justify moderately informative physiological priors (linear-space mean and SD) for the parameters of the mechanistic ODE model below, describing Creatinine, BUN, and Potassium trajectories for acute kidney injury (AKI) over the first 7 days (168 hours) after hospital admission.
+DEFINITION: MODERATELY INFORMATIVE
+A prior is moderately informative if it:
+- Rules out physiologically implausible values 
+- Accommodates substantial inter-patient variability
+
+
+[INITIAL_INFERENCE]
+OBSERVED DATA VISUALISATIONS
+The following plots summarise the observed patient cohort. Examine them carefully before reading the ODE structure or proposing any priors. Use trajectory shape, inter-patient variability, and biomarker correlations to anchor your reasoning.
+
+- mean_trajectory.png     : mean +/- CI of Creatinine, BUN, and Potassium over 168 hours across the cohort
+- diff_corr_heatmap.png   : pairwise differential correlations between biomarker trajectories
+- faceted_by_baseline.png : trajectories stratified by each variable's baseline quartile (Q1 lowest, Q4 highest)
+
+PLANNING RULES (CRITICAL)
+- Examine the observed visualisation plots above before parsing any parameter
+- Infer each parameter's physiological meaning strictly from the ODE structure and AKI pathophysiology 
+- All parameters must be calibrated for an hourly timescale (t in hours)
+
+PRIOR POLICY (HARD)
+- All parameters are LogNormal; report linear-space mean and SD — do not use log-space means or SDs
+- All parameters must be calibrated for an hourly timescale (t in hours)
+- Every parameter entry must include: mean, sd, units, and rationale
+- rationale must be one sentence citing both the physiological basis and a timescale or magnitude check
+
+
+OUTPUT CONTRACT
+Return output in two parts only:
+ 
+Part 1 - Calibration Summary (150 words max):
+A single paragraph summarising your overall calibration strategy, timescale choices, any assumptions made about ODE structure, and how the observed visualisations informed your prior choices.
+
+Part 2 - JSON block (strict format):
+ 
+{
+  "0": {
+    "mean": ...,
+    "sd": ...,
+    "units": "...",
+    "rationale": "..."
+  },
+  "1": {
+    "mean": ...,
+    "sd": ...,
+    "units": "...",
+    "rationale": "..."
+  },
+  ...
+}
+
+
+OUTPUT CHECKLIST (FOLLOW IN ORDER)
+1. Examine the three observed visualisation plots
+2. Parse each parameter's role from the ODE structure
+3. Anchor each prior to the observed trajectory patterns and AKI pathophysiology
+4. Confirm all priors are in linear space with correct units
+5. Return the output contract — no additional prose after
+
+
+[CONSTRAINT_VIOLATION_TASK]
+Your task is to reason from the ODE structure to identify and correct the parameter distributions most likely responsible for the implausible trajectories reported below. These parameters describe Creatinine, BUN, and Potassium trajectories for acute kidney injury (AKI) over the first 7 days (168 hours) after hospital admission. Corrected distributions must remain moderately informative — ruling out physiologically implausible values while accommodating substantial inter-patient variability.
+
+
+[CONSTRAINT_VIOLATION]
+OBSERVED DATA VISUALISATIONS
+The following plots summarise the observed patient cohort. Use them
+to understand plausible trajectory ranges, inter-patient variability,
+and biomarker correlations when reasoning about which parameters are
+driving the reported implausibilities and how to correct them.
+
+- mean_trajectory.png     : mean +/- CI of Creatinine, BUN, and Potassium over 168 hours across the cohort
+- diff_corr_heatmap.png   : pairwise differential correlations between biomarker trajectories
+- faceted_by_baseline.png : trajectories stratified by each variable's baseline quartile (Q1 lowest, Q4 highest)
+
+
+IMPLAUSIBLE TRAJECTORIES REPORT
+{violation_report}
+
+
+CURRENT PARAMETER DISTRIBUTIONS
+{current_params_json}
+
+
+PRIOR POLICY (HARD)
+- All parameters are LogNormal; report linear-space mean and SD — do not use log-space means or SDs
+- All parameters must be calibrated for an hourly timescale (t in hours)
+- Every parameter entry must include: mean, sd, units, and rationale
+- rationale must be one sentence citing both the physiological basis and the correction made
+
+
+OUTPUT CONTRACT
+Part 1 - Correction Summary (100 words max):
+A single paragraph describing which implausibilities were identified,
+which parameters were corrected, and why.
+
+Part 2 - Full parameter JSON (all parameters, not just changed):
+{
+  "0": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+  ...
+}
+
+
+OUTPUT CHECKLIST (FOLLOW IN ORDER)
+1. Examine the observed visualisation plots to understand plausible
+   trajectory ranges and shapes
+2. Read the implausible trajectories report and identify which
+   issue types are present and which biomarkers are affected
+3. Reason through the ODE structure to identify the parameters
+   most likely driving each issue type
+4. Propose corrected mean and SD for each implicated parameter
+5. Confirm every correction has a mechanistic rationale
+6. Return the output contract — no additional prose after
+
+
+[DIAGNOSIS_TASK]
+Your task is to identify the top failure modes between the observed and synthetic trajectories of Creatinine, BUN, and Potassium for acute kidney injury (AKI) over the first 7 days (168 hours) after hospital admission, and select the summary statistics that would best quantify those failures.
+
+
+[DIAGNOSIS]
+COMPARISON VISUALISATIONS (observed vs synthetic)
+The following plots compare the observed patient cohort against the
+synthetic trajectories generated from the best performing parameter
+distributions so far (highest log SL). Use them to identify where
+the synthetic distribution fails to reproduce the observed data.
+
+- mean_trajectory.png     : mean +/- CI over time per biomarker;
+                            blue solid = observed, red dashed = synthetic
+
+- diff_corr_heatmap.png   : differential correlations between biomarker
+                            pairs; left panel = observed, right panel = synthetic
+
+- faceted_by_baseline.png : mean +/- CI trajectories stratified by each
+                            variable's baseline quartile (Q1 lowest,
+                            Q4 highest); blue solid = observed,
+                            red dashed = synthetic
+
+- umap.png                : population structure of observed and synthetic;
+                            blue circle = observed, red triangle = synthetic;
+                            do not interpret point distances as metric
+
+
+PARAMETER DISTRIBUTIONS
+All parameters follow LogNormal distributions. Means and standard
+deviations are reported in linear space.
+
+
+INSTRUCTIONS
+Examine the comparison plots to identify both clear failure modes
+and potential areas of concern. Select the tools that would best
+quantify these mismatches — both confirmed and suspected.
+
+
+OUTPUT CONTRACT
+{
+  "failure_modes": [
+    {
+      "description": "...",
+      "severity": "high|medium|low",
+      "affected_biomarker": "..."
+    },
+    ...
+  ],
+  "tool_calls": [
+    {
+      "tool": "...",
+      "arguments": {...},
+      "reason": "..."
+    },
+    ...
+  ]
+}
+
+
+OUTPUT CHECKLIST (FOLLOW IN ORDER)
+1. Examine all four comparison plots
+2. Identify the top failure modes from the visual evidence
+3. Select the tools that would best quantify the identified failure modes
+4. Return the output contract JSON — no additional prose after
+
+[UPDATE_TASK]
+Your task is to propose updated parameter distributions that address the diagnosed failure modes and improve alignment between the synthetic and observed trajectories of Creatinine, BUN, and Potassium for acute kidney injury (AKI) over the first 7 days (168 hours) after hospital admission.
+
+
+[UPDATE]
+DIAGNOSED FAILURE MODES
+{failure_modes}
+
+
+STAT COMPARISON
+{stat_table}
+
+
+ITERATION HISTORY
+The following records show previous parameter distributions and
+their alignment scores, ordered from worst to best. A less negative
+log SL indicates better alignment with the observed data.
+
+{iteration_history}
+
+
+PRIOR POLICY (HARD)
+- All parameters are LogNormal; report linear-space mean and SD — do not use log-space means or SDs
+- All parameters must be calibrated for an hourly timescale (t in hours)
+- Every parameter entry must include: mean, sd, units, and rationale
+- rationale must be one sentence citing both the physiological basis
+  and the correction made
+
+
+OUTPUT CONTRACT
+Part 1 - Update Summary (150 words max):
+A single paragraph describing what changed, which failure modes
+are being addressed, and why.
+
+Part 2 - Full parameter JSON (all parameters, not just changed):
+{
+  "0": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+  ...
+}
+
+
+OUTPUT CHECKLIST (FOLLOW IN ORDER)
+1. Read the diagnosed failure modes and stat comparison
+2. Consult iteration history and reason from the ODE structure
+   about which parameter changes led to log SL improvement
+   and which directions to work on
+3. Propose updated mean and SD for implicated parameters
+4. Return the output contract — no additional prose after

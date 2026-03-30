@@ -85,13 +85,13 @@ tensorboard --logdir=<LOG_PATH>
 
 **Find the best equation:**
 ```bash
-python analysis/find_best_equation.py --log_path <LOG_PATH>
+python analysis/posthoc/find_best_equation.py --log_path <LOG_PATH>
 ```
 Returns: Best score and sample order.
 
 **Evaluate and visualize a specific system:**
 ```bash
-python analysis/evaluate_and_visualize_system.py \
+python analysis/posthoc/evaluate_and_visualize_system.py \
   --problem_name <PROBLEM_NAME> \
   --sample_order <SAMPLE_ORDER> \
   --log_path <LOG_PATH>

@@ -10,9 +10,11 @@ plausible interactions among the following biomarkers:
 
 The time units is in hours.
 
-HARD CONSTRAINT: The parameter array has exactly MAX_NPARAMS = 25 slots (indices 0–24).
-If you need a new parameter, you must REUSE or REMOVE an existing one.
-Do NOT introduce any params[k] with k >= 25 under any circumstances.
+HARD CONSTRAINT: 
+- The parameter array has at most MAX_NPARAMS = 25 slots.
+- Do NOT skip indices (e.g., using 12 while omitting 10 or 11 is invalid).
+- Use only as many parameters as necessary; avoid introducing redundant parameters.
+
 """
 
 import torch

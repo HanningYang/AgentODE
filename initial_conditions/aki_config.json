@@ -1,5 +1,6 @@
 {
   "problem_name": "aki",
+  "disease": "acute kidney injury (AKI)",
   "description": "Acute Kidney Injury biomarker initial conditions",
   "biomarkers": {
     "creatinine": {

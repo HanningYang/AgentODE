@@ -1,3 +1,9 @@
+# Claude Code
+CLAUDE.md
+
+# Conda environment
+environment.yml
+
 # macOS
 .DS_Store
 
@@ -9,26 +15,8 @@ __pycache__/
 logs/
 
 # Analysis scripts
-analysis/evaluate_mse_real_data.py
-analysis/inspect_system_from_log.py
-analysis/plot_empirical_aki_data.py
-analysis/rank_diffcorr_distance.py
-analysis/rank_quadratic_scores.py
+analysis/posthoc/inspect_system_from_log.py
+analysis/posthoc/generate_synthetic_data.py
+analysis/posthoc/generate_synthetic_data_from_obs_ic.py
 
-# AKI data files
-data/aki/aki_5biomarkers.csv
-data/aki/aki_biomarkers_temporal2.png
-data/aki/aki_biomarkers_temporal3.png
-data/aki/aki_biomarkers_temporal4.png
-data/aki/aki_eva_3var.csv
-data/aki/aki_eva_5var.csv
 
-# Config variants
-initial_conditions/aki_config_5var.json
-
-# Spec variants
-specs_parameters/spec_parameters_aki_3var_v1.txt
-specs_parameters/spec_parameters_aki_3var_v2.txt
-specs_parameters/spec_parameters_aki_5var.txt
-specs_skeleton/specification_aki_numpy_3var.txt
-specs_skeleton/specification_aki_numpy_5var.txt
