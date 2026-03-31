@@ -153,8 +153,9 @@ def extract_tool_calls(result_json: Mapping[str, Any]) -> List[Dict[str, Any]]:
 
 def _get_axis_index(biomarker_order: Sequence[str], name: str) -> int:
     """Return axis index for a given biomarker name with a clear error."""
+    lower_order = [b.lower() for b in biomarker_order]
     try:
-        return biomarker_order.index(name)
+        return lower_order.index(name.lower())
     except ValueError as e:
         raise KeyError(
             f"Variable {name!r} not found in biomarker_order {list(biomarker_order)}."
@@ -185,10 +186,11 @@ def execute_tool_calls(
 
     results: List[Dict[str, Any]] = []
     for call in tool_calls:
-        tool_name = call["tool"]
-        arguments = call["arguments"]
+        tool_name = call.get("tool", "")
+        arguments = {k.lower(): v for k, v in (call.get("arguments") or {}).items()}
         reason = call.get("reason")
 
+        tool_name = tool_name.split(".")[-1]
         fn = TOOL_REGISTRY.get(tool_name)
         if fn is None:
             raise KeyError(f"Unknown tool {tool_name!r} in TOOL_REGISTRY.")

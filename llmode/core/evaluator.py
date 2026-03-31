@@ -207,6 +207,16 @@ class LocalSandbox(Sandbox):
         print(f'Score: {results}\n=====================================================\n\n')
 
 
+    @staticmethod
+    def safe_run(fn, *args, **kwargs) -> tuple[Any, bool]:
+        """Run any callable, returning (result, success) like run().
+        Catches all exceptions so callers can continue without crashing."""
+        try:
+            return fn(*args, **kwargs), True
+        except Exception as e:
+            print(f"[LocalSandbox.safe_run] Caught exception, continuing: {e}")
+            return None, False
+
     def _compile_and_run_function(self, program, function_to_run, function_to_evolve,
                                   dataset, numba_accelerate, result_queue):
         try:

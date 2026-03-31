@@ -62,26 +62,17 @@ def load_function_from_log(
     print(64*'-')
     param_distributions = data.get('param_distributions')
 
-    # Execute the function definition in an isolated namespace to obtain
-    # a real Python callable `system` that we can pass to the ODE solver.
+    # Execute the function definition in an isolated namespace.
     namespace: dict = {"np": np}
     if is_torch_system:
-        # Ensure that type annotations and torch operations inside the logged
-        # function can be resolved when executing the definition.
         namespace["torch"] = torch
     exec(function_str, namespace)
     system_func = namespace.get("system")
 
     if callable(system_func):
-        # Record whether this system is torch-based so that downstream helpers
-        # can select the appropriate simulator backend.
         setattr(system_func, "_torch_backend", bool(is_torch_system))
 
-    # Try to infer the number of state variables from the function body by
-    # looking for assignments of the form:
-    #     x1, x2, ... = biomarkers
-    # Attach this as a private attribute so downstream helpers can detect
-    # mismatches between the IC config dimension and the discovered system.
+    # Infer number of state variables from `x1, x2, ... = biomarkers` unpacking.
     try:
         tree = ast.parse(function_str)
         n_states = None
@@ -95,7 +86,6 @@ def load_function_from_log(
         if n_states is not None and callable(system_func):
             setattr(system_func, "_state_dim", int(n_states))
     except SyntaxError:
-        # If we cannot parse the function body, skip annotation.
         pass
 
     if not callable(system_func):
@@ -120,24 +110,17 @@ def simulate_trajectories(
         biomarker_names: List of biomarker column names
         t_eval: Time grid used for simulation
     """
-    # Load problem configuration
     config = initial_condition_utils.load_ic_config(problem_name)
-    # Full biomarker order in the config (used for ICs / simulation).
     all_biomarker_names = initial_condition_utils.get_biomarker_order(config)
-    # Subset of biomarkers that are actually observed in the data and used
-    # for likelihood / summary statistics.
     biomarker_names = initial_condition_utils.get_observed_biomarker_order(config)
     t_eval = initial_condition_utils.get_time_grid(config)
 
-    # Generate initial conditions
     ic_array, _ = initial_condition_utils.generate_initial_conditions(
         config,
         sample_size=n_patients,
         random_seed=config.get('random_seed', None),
     )
 
-    # Sample parameters. Prefer LLM-inferred distributions when available;
-    # otherwise fall back to a simple default.
     if param_distributions:
         params = param_utils.sample_params_from_distributions(
             param_distributions,
@@ -145,14 +128,10 @@ def simulate_trajectories(
             distribution="lognormal",
         )
     else:
-        # Fallback: single-parameter vector of ones for all patients.
-        # This should be overridden whenever param_distributions are present
-        # in the sample log.
         params = np.ones((n_patients, 1))
 
     use_torch_backend = bool(getattr(system_func, "_torch_backend", False))
 
-    # Simulate trajectories
     if use_torch_backend:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         traj_t = ode_simulator.simulate_ode_system_torch(
@@ -174,32 +153,21 @@ def simulate_trajectories(
             method='odeint',
         )
 
-    # Drop patients whose trajectories are numerically or physiologically invalid,
-    # to match the behavior used in the quadratic-score evaluation.
     valid_mask, _issues = ode_simulator.check_trajectory_normal_range_validity(
-        trajectories,
-        config=config,
-        check_nans=True,
+        trajectories, config=config, check_nans=True,
     )
     valid_fraction = float(valid_mask.sum()) / float(valid_mask.size)
     print(f"Fraction of physiologically valid trajectories: {valid_fraction:.3f}")
 
     trajectories = trajectories[valid_mask]
-
-    # Restrict trajectories to the subset of biomarkers that are observed in
-    # the data, so that the biomarker dimension matches `biomarker_names`.
     observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
     trajectories_obs = trajectories[..., observed_indices]
 
-    # Convert to DataFrame
     records = []
     n_valid = trajectories_obs.shape[0]
     for patient_id in range(n_valid):
         for t_idx, t in enumerate(t_eval):
-            record = {
-                'id': patient_id,
-                't': t,
-            }
+            record = {'id': patient_id, 't': t}
             for bio_idx, bio_name in enumerate(biomarker_names):
                 record[bio_name] = trajectories_obs[patient_id, t_idx, bio_idx]
             records.append(record)
@@ -218,7 +186,6 @@ def create_visualizations(
     n_biomarkers = len(biomarker_names)
     fig = plt.figure(figsize=(18, 12))
 
-    # Sample patients for individual trajectories
     sample_patients = df['id'].unique()[:5]
 
     # Row 1: Individual patient trajectories
@@ -245,18 +212,11 @@ def create_visualizations(
 
     for i, biomarker in enumerate(biomarker_names):
         ax = plt.subplot(3, n_biomarkers, n_biomarkers + i + 1)
-        # Explicitly set observed=False to retain current pandas behavior
+        # observed=False avoids FutureWarning with categorical groupby
         stats = df.groupby('time_bin', observed=False)[biomarker].agg(['mean', 'std', 'count'])
         stats['se'] = stats['std'] / np.sqrt(stats['count'])
-
-        # Use t-distribution for more accurate confidence intervals (correct for all sample sizes)
-        # Calculate critical value from t-distribution based on degrees of freedom (n-1)
         stats['t_critical'] = stats['count'].apply(lambda n: scipy.stats.t.ppf(0.975, n-1))
         stats['ci'] = stats['t_critical'] * stats['se']
-
-        # Original z-distribution approach (approximation valid for large samples):
-        # stats['ci'] = 1.96 * stats['se']
-
         bin_centers = [(interval.left + interval.right) / 2 for interval in stats.index]
 
         ax.plot(bin_centers, stats['mean'], linewidth=2, label='Mean')
@@ -281,13 +241,9 @@ def create_visualizations(
 
     for i, biomarker in enumerate(biomarker_names):
         ax = plt.subplot(3, n_biomarkers, 2 * n_biomarkers + i + 1)
-
-        # Filter out NaN values
         valid_data = df[['t', biomarker]].dropna()
 
         if len(valid_data) > 0:
-            # Use fixed y-axis range for density plots when provided;
-            # otherwise fall back to the data-driven range.
             if y_ranges and 'density' in y_ranges and biomarker in y_ranges['density']:
                 y_min, y_max = y_ranges['density'][biomarker]
             else:
@@ -303,9 +259,7 @@ def create_visualizations(
 
             im = ax.imshow(H.T, origin='lower', aspect='auto',
                           cmap=colormaps[i % len(colormaps)],
-                          extent=[0, df['t'].max(),
-                                 y_min,
-                                 y_max])
+                          extent=[0, df['t'].max(), y_min, y_max])
             ax.set_xlabel('Time')
             ax.set_ylabel(biomarker)
             ax.set_title(f'{biomarker} Density over Time')
@@ -325,35 +279,23 @@ def main():
     parser = argparse.ArgumentParser(
         description='Visualize simulated trajectories from discovered ODE equations'
     )
-    parser.add_argument('--problem_name', type=str, required=True,
-                       help='Problem name (e.g., aki)')
-    parser.add_argument('--sample_order', type=int, required=True,
-                       help='Sample order number from the log')
-    parser.add_argument('--log_path', type=str, required=True,
-                       help='Path to the log directory')
-    parser.add_argument('--n_patients', type=int, default=100,
-                       help='Number of patients to simulate (default: 100)')
-    parser.add_argument('--param_dist_path', type=str, default=None,
-                       help='Path to parameter distributions JSON file (optional)')
-    parser.add_argument('--output', type=str, default=None,
-                       help='Output path for the visualization (default: show plot)')
+    parser.add_argument('--problem_name', type=str, required=True)
+    parser.add_argument('--sample_order', type=int, required=True)
+    parser.add_argument('--log_path', type=str, required=True)
+    parser.add_argument('--n_patients', type=int, default=100)
+    parser.add_argument('--param_dist_path', type=str, default=None)
+    parser.add_argument('--output', type=str, default=None)
 
     args = parser.parse_args()
 
-    # Load the function from log
     print(f"Loading function from sample {args.sample_order}...")
     system_func, sample_param_distributions = load_function_from_log(
         args.log_path,
         args.sample_order,
     )
 
-    # Detect the state dimension inferred from the logged function (if
-    # available) and compare it to the IC config for this problem. For AKI we
-    # may have runs with different numbers of state variables (e.g. 3 vs 5),
-    # while the config can contain a superset of biomarkers. In that case we
-    # wrap the system so it operates on the first `n_states` entries and returns
-    # zero derivatives for any extra dimensions, keeping the observed biomarker
-    # projections consistent.
+    # If the IC config has more state dimensions than the discovered system,
+    # wrap the system to pad extra derivatives with zeros.
     inferred_n_states = getattr(system_func, "_state_dim", None)
     config_n_states = None
     try:
@@ -365,8 +307,7 @@ def main():
     wrapped_system_func = system_func
     if inferred_n_states is not None and config_n_states is not None:
         if config_n_states > inferred_n_states:
-            # Inspect whether the original system expects an explicit time
-            # argument so we can delegate correctly inside the wrapper.
+            # Detect whether the base system accepts an explicit time argument.
             base_accepts_time = False
             try:
                 sig = inspect.signature(system_func)
@@ -374,7 +315,7 @@ def main():
                 if len(param_names) >= 3 and param_names[2] in ('t', 'time', 'time_point'):
                     base_accepts_time = True
             except (TypeError, ValueError):
-                base_accepts_time = False
+                pass
 
             def padded_system(
                 biomarkers: np.ndarray,
@@ -384,16 +325,9 @@ def main():
                 _accepts_time: bool = base_accepts_time,
                 _n_states: int = inferred_n_states,
             ) -> np.ndarray:
-                # Use only the first `_n_states` entries for the discovered
-                # system and pad any extra dimensions with zeros so the shape
-                # matches the IC config.
                 core = biomarkers[:_n_states]
-                if _accepts_time:
-                    core_deriv = _base_func(core, params, t)
-                else:
-                    core_deriv = _base_func(core, params)
+                core_deriv = _base_func(core, params, t) if _accepts_time else _base_func(core, params)
                 core_deriv = np.asarray(core_deriv, dtype=float).reshape(-1)[:_n_states]
-
                 deriv = np.zeros_like(biomarkers, dtype=float)
                 deriv[:_n_states] = core_deriv
                 return deriv
@@ -405,16 +339,12 @@ def main():
             )
             wrapped_system_func = padded_system
 
-    # Load parameter distributions:
-    #   - if a JSON path is provided, use that;
-    #   - otherwise fall back to any distributions stored in the sample log.
     param_distributions = sample_param_distributions
     if args.param_dist_path:
         with open(args.param_dist_path, 'r') as f:
             param_distributions = json.load(f)
         print(f"Loaded parameter distributions from {args.param_dist_path}")
 
-    # Simulate trajectories
     print(f"Simulating {args.n_patients} patient trajectories...")
     df, biomarker_names, t_eval, trajectories = simulate_trajectories(
         system_func=wrapped_system_func,
@@ -455,21 +385,14 @@ def main():
         print(f"{'Idx':<4} {'Statistic':<40} {'Observed':>12} {'Simulated':>12} {'Diff':>12}")
         print("-" * 84)
         for idx, (name, so, ss) in enumerate(zip(stat_names, s_obs, s_sim)):
-            diff = ss - so
-            print(f"{idx:<4} {name:<40} {so:12.4f} {ss:12.4f} {diff:12.4f}")
+            print(f"{idx:<4} {name:<40} {so:12.4f} {ss:12.4f} {ss-so:12.4f}")
 
-        # Euclidean distance between observed and simulated summary-statistics vectors.
-        diffs = s_sim - s_obs
-        euclidean_distance = float(np.linalg.norm(diffs))
+        euclidean_distance = float(np.linalg.norm(s_sim - s_obs))
         print("-" * 84)
         print(f"Euclidean distance (||s_sim - s_obs||_2): {euclidean_distance:.4f}")
     else:
         print(f"\nObserved data file not found at {observed_data_path}; skipping summary stats comparison.")
 
-    # Compute Euclidean summary-statistics distance (if parameter priors are available).
-    # For torch-based systems, ensure we use the torch simulator backend so that
-    # the trajectories used for scoring are consistent with those used for
-    # visualization and centralized evaluation.
     if param_distributions is not None:
         quad_backend = "gpu" if getattr(wrapped_system_func, "_torch_backend", False) else "cpu"
         distance = evaluate_system_euclidean_distance(
@@ -489,8 +412,6 @@ def main():
     else:
         print("No parameter distributions provided; skipping quadratic score evaluation.")
 
-    # Create visualizations
-    # print("Creating visualizations...")
     output_path = args.output
     if output_path is None and args.log_path:
         output_path = os.path.join(
@@ -498,19 +419,19 @@ def main():
             f'trajectories_sample_{args.sample_order}.png'
         )
 
-    # Optional fixed y-axis ranges for AKI problem visualizations.
+    # Optional fixed y-axis ranges for AKI visualizations.
     y_ranges = None
     if args.problem_name == 'aki' and biomarker_names == ['creatinine', 'bun', 'potassium']:
         y_ranges = {
             'trajectories': {
-                'creatinine': (0.0, 11.0), # (0.340, 10.460),
-                'bun': (1.0, 120.0), # (3.900, 116.100),
-                'potassium': (2.0, 7.0), # (3.300, 5.500),
+                'creatinine': (0.0, 11.0),
+                'bun': (1.0, 120.0),
+                'potassium': (2.0, 7.0),
             },
             'mean_ci': {
-                'creatinine': (1.0, 3.0), # (1.631, 2.773),
-                'bun': (30.0, 50.0), # (31.914, 41.068),
-                'potassium': (3.8, 4.5), # (4.021, 4.322),
+                'creatinine': (1.0, 3.0),
+                'bun': (30.0, 50.0),
+                'potassium': (3.8, 4.5),
             },
             'density': {
                 'creatinine': (0.200, 19.100),

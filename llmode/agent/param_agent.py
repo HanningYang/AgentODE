@@ -28,6 +28,16 @@ from llmode.core import param_utils
 
 DEBUG_PRINTS = os.environ.get("LLMODE_DEBUG_PRINTS", "0") == "1"
 
+_W = 72  # banner width
+
+def _dbg(label: str, body: str = "") -> None:
+    """Print a visually separated debug block."""
+    banner = f"{'─' * _W}\n  {label}\n{'─' * _W}"
+    print(f"\n{banner}")
+    if body:
+        print(body)
+    print()
+
 
 class ParameterAgent:
     """Infers and iteratively refines ODE parameter distributions via LLM.
@@ -51,8 +61,7 @@ class ParameterAgent:
         self._spec_path = os.path.join("specs_params", f"spec_params_{problem_name}.txt")
         self._fig_dir = os.path.join("workspace", problem_name, "figures")
         self._figures_content = prompt_builder.build_figures_block_from_dir(self._fig_dir)
-        # Load observed figures as PNG bytes so API / OpenWebUI backends
-        # can receive actual images (via data URLs) rather than filenames.
+        # Load observed figures as PNG bytes
         self._figures_bytes_observed: Dict[str, bytes] = {}
         if os.path.isdir(self._fig_dir):
             for fname in os.listdir(self._fig_dir):
@@ -132,13 +141,13 @@ class ParameterAgent:
         if score is None or not np.isfinite(score):
             best_implaus = self._implausibility_report(params)
             if DEBUG_PRINTS:
-                print(f"[ParamAgent] sample={sample_order}: init logSL=None (implausible)")
+                _dbg(f"ParamAgent | sample={sample_order} | init logSL=None (implausible)")
         else:
             best_score = float(score)
             best_feedback = feedback
             history.record_param_candidate(best_score, params)
             if DEBUG_PRINTS:
-                print(f"[ParamAgent] sample={sample_order}: init logSL={best_score:.3f}")
+                _dbg(f"ParamAgent | sample={sample_order} | init logSL={best_score:.3f}")
 
         # Check early extension based on initial L2 score.
         if not extended_mode and best_island_score is not None and extended_max_steps > max_steps:
@@ -181,9 +190,19 @@ class ParameterAgent:
                     best_params = new_params
                     best_implaus = new_implaus
                     best_feedback = None
-                    no_improve_count = 0
+                    # First None gets a grace period; from the second onwards
+                    # it counts as no improvement.
+                    if null_score_count > 1:
+                        no_improve_count += 1
                 else:
                     no_improve_count += 1
+                if DEBUG_PRINTS:
+                    best_str = f"{best_score:.3f}" if best_score is not None else "None"
+                    _dbg(
+                        f"ParamAgent | sample={sample_order} | step {steps_done+1} | "
+                        f"logSL=None  best={best_str}  "
+                        f"no_improve={no_improve_count}/{patience}  null_count={null_score_count}/{patience}"
+                    )
                 if null_score_count >= patience:
                     break
             else:
@@ -218,10 +237,10 @@ class ParameterAgent:
 
                 if DEBUG_PRINTS:
                     best_str = f"{best_score:.3f}" if best_score is not None else "None"
-                    print(
-                        f"[ParamAgent] sample={sample_order}: step {steps_done+1} "
-                        f"logSL={new_score_val:.3f}, best={best_str}, "
-                        f"no_improve={no_improve_count}/{patience}"
+                    _dbg(
+                        f"ParamAgent | sample={sample_order} | step {steps_done+1} | "
+                        f"logSL={new_score_val:.3f}  best={best_str}  "
+                        f"no_improve={no_improve_count}/{patience}  null_count={null_score_count}/{patience}"
                     )
                 if best_score is not None and no_improve_count >= patience:
                     break
@@ -274,7 +293,7 @@ class ParameterAgent:
             return None
 
         if DEBUG_PRINTS:
-            print("[ParamAgent] Initial inference prompt:\n", prompt)
+            _dbg("PROMPT | INITIAL_INFERENCE", prompt)
 
         # For API/OpenWebUI backends, pass observed figures as images.
         return self._call_llm(prompt, images=self._figures_bytes_observed or None)
@@ -292,7 +311,7 @@ class ParameterAgent:
     ) -> Optional[str]:
         try:
             current_params_str = json.dumps(current_params or {}, indent=2, sort_keys=True)
-            return prompt_builder.build_param_prompt(
+            prompt = prompt_builder.build_param_prompt(
                 spec_path=self._spec_path,
                 prompt_type="CONSTRAINT_VIOLATION",
                 placeholders={
@@ -301,6 +320,9 @@ class ParameterAgent:
                     "current_params_json": current_params_str,
                 },
             )
+            if DEBUG_PRINTS:
+                _dbg("PROMPT | CONSTRAINT_VIOLATION", prompt)
+            return prompt
         except Exception as e:
             print(f"[ParamAgent] Failed to build optimization prompt (mode={mode}): {e}")
             return None
@@ -339,7 +361,7 @@ class ParameterAgent:
             return None
 
         if DEBUG_PRINTS:
-            print("[ParamAgent] DIAGNOSIS prompt:\n", diagnosis_prompt)
+            _dbg("PROMPT | DIAGNOSIS", diagnosis_prompt)
 
         # For DIAGNOSIS, include comparison figures (observed vs synthetic)
         # when using API/OpenWebUI so the LLM can inspect actual plots.
@@ -409,7 +431,7 @@ class ParameterAgent:
             return None
 
         if DEBUG_PRINTS:
-            print("[ParamAgent] UPDATE prompt:\n", update_prompt)
+            _dbg("PROMPT | UPDATE", update_prompt)
 
         return self._call_llm(update_prompt)
 
@@ -484,14 +506,11 @@ class ParameterAgent:
                 l2 = -float(dist)
                 if l2 >= best_island_score:
                     if DEBUG_PRINTS:
-                        print(
-                            f"[ParamAgent] sample={sample_order}: extending to "
-                            f"{extended_max} steps (L2={dist:.3f})"
-                        )
+                        _dbg(f"ParamAgent | sample={sample_order} | extending to {extended_max} steps (L2={dist:.3f})")
                     return True
         except Exception as e:
             if DEBUG_PRINTS:
-                print(f"[ParamAgent] Failed to compute L2 for extension check: {e}")
+                _dbg(f"ParamAgent | L2 extension check failed: {e}")
         return False
 
     # ------------------------------------------------------------------
@@ -564,7 +583,7 @@ class ParameterAgent:
             return None
 
         if DEBUG_PRINTS:
-            print("[ParamAgent] Raw LLM response:\n", llm_output)
+            _dbg("LLM RESPONSE", llm_output)
 
         return llm_output
 
@@ -658,12 +677,7 @@ class ParameterAgent:
 
         if DEBUG_PRINTS:
             num_images = sum(1 for part in content if part.get("type") == "image_url")
-            print(f"[ParamAgent._call_api] sending {num_images} image(s) to provider '{provider}'")
-            for part in content:
-                if part.get("type") == "image_url":
-                    prefix = part["image_url"]["url"][:80]
-                    print(f"[ParamAgent._call_api] first image data URL prefix: {prefix}...")
-                    break
+            _dbg(f"API REQUEST | provider={provider} | images={num_images}")
 
         request_body: Dict[str, Any] = {
             "max_tokens": 8192,
@@ -716,12 +730,7 @@ class ParameterAgent:
 
         if DEBUG_PRINTS:
             num_images = sum(1 for part in content if part.get("type") == "image_url")
-            print(f"[ParamAgent._call_openwebui] sending {num_images} image(s) to {base_url}")
-            for part in content:
-                if part.get("type") == "image_url":
-                    prefix = part["image_url"]["url"][:80]
-                    print(f"[ParamAgent._call_openwebui] first image data URL prefix: {prefix}...")
-                    break
+            _dbg(f"OPENWEBUI REQUEST | url={base_url} | images={num_images}")
 
         create_kwargs: Dict[str, Any] = {
             "model": model_name,

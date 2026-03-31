@@ -107,7 +107,10 @@ class Sampler:
                 print(f"{'='*80}")
 
             reset_time = time.time()
-            samples = self._llm.draw_samples(prompt.code, self.config)
+            samples, ok = evaluator.LocalSandbox.safe_run(
+                self._llm.draw_samples, prompt.code, self.config)
+            if not ok:
+                continue
             sample_time = (time.time() - reset_time) / self._samples_per_prompt
 
             for idx, sample in enumerate(samples):
@@ -137,7 +140,8 @@ class Sampler:
                 if llm_model_name is not None:
                     extra_kwargs['llm_model_name'] = llm_model_name
 
-                chosen_evaluator.analyse(
+                evaluator.LocalSandbox.safe_run(
+                    chosen_evaluator.analyse,
                     sample,
                     prompt.island_id,
                     prompt.version_generated,

@@ -1,12 +1,7 @@
 """Euclidean summary-statistics distance for ODE systems.
 
-Uses the same summary statistics as the synthetic likelihood module, but
-replaces the log synthetic likelihood with a simple Euclidean distance:
-
-    distance = ||s_obs - mu_hat||_2
-
-where s_obs are summary statistics from observed data and mu_hat is the
-mean summary-statistics vector from simulated trajectories.
+Computes distance = ||s_obs - mu_hat||_2 where s_obs are observed summary
+statistics and mu_hat is the mean summary-statistics vector from simulations.
 """
 
 from __future__ import annotations
@@ -33,22 +28,13 @@ def evaluate_system_euclidean_distance(
     backend: str = "cpu",
     standardization: bool = True,
 ) -> float | None:
-    """Evaluate a system via Euclidean distance in summary-stat space.
-
-    By default, the quantile-based statistics are computed on *non-standardized*
-    biomarker values (standardization=False), so this measures distance directly
-    in the raw summary-statistics space.
-    """
+    """Evaluate a system via Euclidean distance in summary-stat space."""
     from llmode.ode import initial_condition_utils, ode_simulator
-    from llmode.ode import ode_simulator
     from llmode.core import param_utils
 
-    # If no parameter distributions are available, treat as unevaluable.
     if param_distributions is None:
         return None
 
-    # Load configuration and observed data (cached per problem and
-    # standardization choice).
     obs = get_observed_summary(problem_name, standardization=standardization)
     config = obs["config"]
     biomarker_names = obs["biomarker_names"]
@@ -64,98 +50,51 @@ def evaluate_system_euclidean_distance(
             distribution="lognormal",
         )
 
+    def _filter_valid(trajectories: np.ndarray) -> np.ndarray:
+        valid_mask, _ = ode_simulator.check_trajectory_normal_range_validity(
+            trajectories, config=config, check_nans=True,
+        )
+        observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
+        return trajectories[valid_mask][..., observed_indices]
+
     if backend == "gpu":
         import torch
-
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        def simulator(
-            n_patients: int,
-            sampler_fn: Callable[[int], np.ndarray],
-            t_grid: np.ndarray,
-        ) -> np.ndarray:
+        def simulator(n_patients, sampler_fn, t_grid):
             ic_array, _ = initial_condition_utils.generate_initial_conditions(
-                config,
-                sample_size=n_patients,
+                config, sample_size=n_patients,
                 random_seed=config.get("random_seed", None),
             )
-            param_sets = sampler_fn(n_patients)
-
             traj_t = ode_simulator.simulate_ode_system_torch(
                 system_func=system_func,
                 initial_conditions=ic_array,
                 time_grid=t_grid,
-                params=param_sets,
+                params=sampler_fn(n_patients),
                 device=device,
                 dtype=torch.float32,
             )
-            trajectories = traj_t.detach().cpu().numpy()
-
-            valid_mask, _issues = ode_simulator.check_trajectory_normal_range_validity(
-                trajectories,
-                config=config,
-                check_nans=True,
-            )
-
-            observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
-            if not np.any(valid_mask):
-                empty = trajectories[valid_mask][..., observed_indices]
-                return empty
-            return trajectories[valid_mask][..., observed_indices]
+            return _filter_valid(traj_t.detach().cpu().numpy())
     else:
-
-        def simulator(
-            n_patients: int,
-            sampler_fn: Callable[[int], np.ndarray],
-            t_grid: np.ndarray,
-        ) -> np.ndarray:
+        def simulator(n_patients, sampler_fn, t_grid):
             ic_array, _ = initial_condition_utils.generate_initial_conditions(
-                config,
-                sample_size=n_patients,
+                config, sample_size=n_patients,
                 random_seed=config.get("random_seed", None),
             )
-            param_sets = sampler_fn(n_patients)
             trajectories = ode_simulator.simulate_ode_system(
                 system_func=system_func,
                 initial_conditions=ic_array,
                 time_grid=t_grid,
-                params=param_sets,
+                params=sampler_fn(n_patients),
                 method="odeint",
             )
-            # Drop patients whose trajectories are numerically or physiologically invalid.
-            valid_mask, _issues = ode_simulator.check_trajectory_normal_range_validity(
-                trajectories,
-                config=config,
-                check_nans=True,
-            )
+            return _filter_valid(trajectories)
 
-            # Map observed biomarker names 
-            observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
+    trajectories = simulator(N_PATIENTS_EUCLIDEAN, param_sampler, t_eval)
 
-            if not np.any(valid_mask):
-                # No valid trajectories: return an empty array with the correct
-                # biomarker dimension so downstream summary-stat routines do not
-                # see a mismatch between n_bio and len(biomarker_names).
-                empty = trajectories[valid_mask][..., observed_indices]
-                return empty
-
-            # Restrict trajectories to valid patients and observed biomarkers.
-            return trajectories[valid_mask][..., observed_indices]
-
-    # Single simulation with N_PATIENTS_EUCLIDEAN patients.
-    trajectories = simulator(
-        N_PATIENTS_EUCLIDEAN,
-        param_sampler,
-        t_eval,
-    )
-
-    # If no valid trajectories were produced (e.g., all simulations violate
-    # physiological or numerical constraints), treat this as unevaluable
-    # rather than propagating empty arrays into summary-stat computations.
     if trajectories.size == 0:
         return None
 
-    # Compute summary statistics for the simulated trajectories.
     s_sim = compute_summary_stats(
         trajectories=trajectories,
         t_eval=t_eval,
@@ -163,15 +102,13 @@ def evaluate_system_euclidean_distance(
         std_params=std_params,
         standardization=standardization,
     )
-    mu_hat = s_sim
 
-    residual = s_obs - mu_hat
-    distance = float(np.linalg.norm(residual))
+    distance = float(np.linalg.norm(s_obs - s_sim))
 
     if not np.isfinite(distance):
         return None
 
     if verbose:
-        print(f"\nEuclidean distance (||s_obs - mu_hat||_2): {distance:.2f}\n")
+        print(f"Euclidean distance (||s_obs - mu_hat||_2): {distance:.2f}")
 
     return distance

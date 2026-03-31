@@ -159,8 +159,9 @@ deviations are reported in linear space.
 
 INSTRUCTIONS
 Examine the comparison plots to identify both clear failure modes
-and potential areas of concern. Select the tools that would best
-quantify these mismatches — both confirmed and suspected.
+and potential areas of concern. Select all tools that would provide
+useful diagnostic information for the identified and suspected
+mismatches — be thorough but avoid redundant statistics.
 
 
 OUTPUT CONTRACT
@@ -187,7 +188,7 @@ OUTPUT CONTRACT
 OUTPUT CHECKLIST (FOLLOW IN ORDER)
 1. Examine all four comparison plots
 2. Identify the top failure modes from the visual evidence
-3. Select the tools that would best quantify the identified failure modes
+3. Call the appropriate tools
 4. Return the output contract JSON — no additional prose after
 
 [UPDATE_TASK]
@@ -196,6 +197,9 @@ Your task is to propose updated parameter distributions that address the diagnos
 
 [UPDATE]
 DIAGNOSED FAILURE MODES
+The following failure modes and summary statistics were diagnosed
+from the best performing parameter distributions so far.
+
 {failure_modes}
 
 

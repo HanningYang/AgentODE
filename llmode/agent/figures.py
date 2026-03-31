@@ -1,30 +1,7 @@
-"""In-memory figures for observed vs synthetic trajectory comparison.
+"""Observed vs synthetic trajectory comparison figures returned as PNG bytes.
 
-This module builds the same four comparison plots you used in the standalone
-`trajectory_comparison.py` script, but:
-  - works from in-memory DataFrames,
-  - auto-loads observed data from `data/<problem_name>/<problem_name>.csv`,
-  - returns PNG bytes (not files on disk), ready to pass to LLM APIs.
-
-Public entry point
-------------------
-    generate_observed_vs_synthetic_figures(
-        problem_name: str,
-        synthetic_df: pd.DataFrame,
-        vars: Optional[list[str]] = None,
-        bin_width: float = 24.0,
-        umap_n_neighbors: int = 15,
-        umap_min_dist: float = 0.1,
-        umap_metric: str = "euclidean",
-    ) -> dict[str, bytes]
-
-The returned dict maps a descriptive figure name to PNG-encoded bytes:
-    {
-        "mean_trajectory": b"...",
-        "umap": b"...",                  # only if umap-learn + sklearn installed
-        "faceted_by_baseline": b"...",
-        "diff_corr_heatmap": b"...",
-    }
+Auto-loads observed data from `data/<problem_name>/<problem_name>.csv`.
+Returns: {"mean_trajectory", "umap" (optional), "faceted_by_baseline", "diff_corr_heatmap"}.
 """
 
 from __future__ import annotations
@@ -41,12 +18,7 @@ from matplotlib.lines import Line2D
 
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Return a copy with stripped, lower-cased column names.
-
-    Coerces all column labels to strings and normalises them without using
-    the pandas `.str` accessor, so this is safe even if the original
-    columns were non-string or mixed types.
-    """
+    """Return a copy with stripped, lower-cased column names."""
     out = df.copy()
     out.columns = [str(c).strip().lower() for c in out.columns]
     return out
@@ -282,18 +254,12 @@ def generate_observed_vs_synthetic_figures(
         vars = _auto_detect_vars(obs)
     vars = [v for v in vars if v in obs.columns and v in synth.columns]
     if not vars:
-        # Debug output to understand why there is no overlap.
-        obs_numeric = _auto_detect_vars(obs)
-        synth_numeric = _auto_detect_vars(synth)
-        print(
-            "[figures] No shared numeric variables:",
-            f"obs_numeric={obs_numeric}, synth_numeric={synth_numeric}",
+        if n_synth_patients == 0:
+            return {}
+        raise ValueError(
+            f"No shared numeric variables between observed {_auto_detect_vars(obs)} "
+            f"and synthetic {_auto_detect_vars(synth)} ({n_synth_patients} patients)."
         )
-        # This can happen if the synthetic trajectories are entirely invalid
-        # for the current parameter set (no valid patients), so the synthetic
-        # DataFrame has no numeric biomarker columns. In that case we simply
-        # skip figure generation for this diagnosis step.
-        return {}
 
 
     # Bin both datasets
