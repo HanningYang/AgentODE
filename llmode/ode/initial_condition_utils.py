@@ -124,29 +124,22 @@ def generate_initial_conditions(
     random_seed: Optional[int] = None,
     clip: bool = True
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
-    """
-    Generate initial conditions for biomarkers based on configuration.
+    """Generate initial biomarker values from a configuration.
+
+    If `config` includes a `correlation_matrix`, samples are drawn from a
+    multivariate distribution (with log-space adjustment for log-normal
+    biomarkers); otherwise, biomarkers are sampled independently from their
+    marginal distributions.
 
     Args:
-        config: Configuration dictionary from load_ic_config()
-        sample_size: Number of samples to generate (uses config default if None)
-        random_seed: Random seed for reproducibility (uses config default if None)
-        clip: Whether to clip values to specified ranges
-
-    Behavior:
-        - If `config` contains a 'correlation_matrix' (in linear space), initial
-          conditions are drawn from a multivariate distribution that preserves
-          the correlation structure while respecting each biomarker's marginal
-          distribution (normal/lognormal).
-        - For log-normal biomarkers, the correlation matrix is transformed to
-          log-space before sampling.
-        - If no correlation_matrix is provided, each biomarker is sampled
-          independently according to its marginal distribution.
+        config: Configuration dictionary from `load_ic_config`.
+        sample_size: Number of samples (uses config default if None).
+        random_seed: Random seed (uses config default if None).
+        clip: Whether to clip values to each biomarker's range.
 
     Returns:
-        Tuple of:
-            - biomarkers_array: Array of shape (sample_size, n_biomarkers)
-            - biomarkers_dict: Dictionary mapping biomarker names to 1D arrays
+        biomarkers_array: Array of shape `(sample_size, n_biomarkers)`.
+        biomarkers_dict: Mapping biomarker name → 1D array of samples.
     """
     # Set defaults
     if sample_size is None:

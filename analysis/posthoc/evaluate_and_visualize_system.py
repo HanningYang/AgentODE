@@ -1,7 +1,7 @@
 """Visualize simulated ODE trajectories from discovered equations.
 
 Usage:
-    python analysis/evaluate_and_visualize_system.py --problem_name aki --sample_order 42 --log_path logs/aki_run1
+    python analysis/posthoc/evaluate_and_visualize_system.py --problem_name aki --sample_order 42 --log_path logs/aki_run1
 """
 
 import argparse
@@ -282,7 +282,7 @@ def main():
     parser.add_argument('--problem_name', type=str, required=True)
     parser.add_argument('--sample_order', type=int, required=True)
     parser.add_argument('--log_path', type=str, required=True)
-    parser.add_argument('--n_patients', type=int, default=100)
+    parser.add_argument('--n_patients', type=int, default=1000)
     parser.add_argument('--param_dist_path', type=str, default=None)
     parser.add_argument('--output', type=str, default=None)
 

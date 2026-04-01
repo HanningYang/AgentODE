@@ -44,8 +44,10 @@ def check_trajectory_normal_range_validity(
 ) -> Tuple[np.ndarray, Dict[str, int]]:
     """Check validity using physiological normal ranges for each biomarker.
 
-    Invalid if: NaN, inf, negative values, or any biomarker outside its
-    [normal_min, normal_max] physiological range (if defined).
+    A trajectory is marked invalid if it has any NaN, inf, negative value,
+    or any biomarker outside its [normal_min, normal_max] physiological
+    range (if defined). All issue types present in a trajectory are counted;
+    i.e. a single trajectory can contribute to multiple counters.
     """
     n_samples = trajectories.shape[0]
     valid_mask = np.ones(n_samples, dtype=bool)
@@ -61,21 +63,21 @@ def check_trajectory_normal_range_validity(
     for i in range(n_samples):
         trajectory = trajectories[i]
 
+        sample_invalid = False
+
         if check_nans and np.any(np.isnan(trajectory)):
-            valid_mask[i] = False
+            sample_invalid = True
             issue_counts["has_nan"] += 1
-            continue
 
         if np.any(np.isinf(trajectory)):
-            valid_mask[i] = False
+            sample_invalid = True
             issue_counts["has_inf"] += 1
-            continue
 
         if np.any(trajectory < 0):
-            valid_mask[i] = False
+            sample_invalid = True
             issue_counts["negative_values"] += 1
-            continue
 
+        outside_range = False
         for j, name in enumerate(biomarker_names):
             phys_range = config["biomarkers"][name].get("physiological_range")
             if not phys_range:
@@ -86,9 +88,15 @@ def check_trajectory_normal_range_validity(
                 continue
             vals = trajectory[:, j]
             if np.any(vals < normal_min) or np.any(vals > normal_max):
-                valid_mask[i] = False
-                issue_counts["outside_normal_range"] += 1
+                outside_range = True
                 break
+
+        if outside_range:
+            sample_invalid = True
+            issue_counts["outside_normal_range"] += 1
+
+        if sample_invalid:
+            valid_mask[i] = False
 
     return valid_mask, issue_counts
 

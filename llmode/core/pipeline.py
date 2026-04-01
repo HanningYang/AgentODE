@@ -29,6 +29,7 @@ from llmode.core import buffer
 from llmode.core import sampler
 from llmode.core import profile
 from llmode.core import param_utils
+from llmode.core import checkpoint as checkpoint_lib
 from llmode.metrics import euclidean_score as _euclidean_score
 
 
@@ -65,9 +66,37 @@ def main(
     template = code_manipulation.text_to_program(specification)
 
     param_utils.set_default_system_docstring_from_program(template, function_to_evolve)
-    database = buffer.ExperienceBuffer(config.experience_buffer, template, function_to_evolve)
 
     log_dir = kwargs.get('log_dir', None)
+
+    # --- Checkpoint: try to resume from a previous run in log_dir ---
+    resumed_database, resumed_sample_num = (None, None)
+    if log_dir is not None:
+        resumed_database, resumed_sample_num = checkpoint_lib.load(log_dir)
+
+    if resumed_database is not None:
+        database = resumed_database
+        # Restore the template reference so new Islands use the current spec.
+        database._template = template
+        sampler.Sampler._global_samples_nums = resumed_sample_num
+        already_seeded = True
+    else:
+        database = buffer.ExperienceBuffer(config.experience_buffer, template, function_to_evolve)
+        already_seeded = False
+
+    # Wrap register_program to save a checkpoint after every registration.
+    if log_dir is not None:
+        _orig_register = database.register_program
+
+        def _register_with_checkpoint(program, island_id, scores_per_test, **kw):
+            _orig_register(program, island_id, scores_per_test, **kw)
+            checkpoint_lib.save(
+                log_dir, database,
+                sampler.Sampler._global_samples_nums,
+            )
+
+        database.register_program = _register_with_checkpoint
+
     if log_dir is None:
         profiler = None
     else:
@@ -93,65 +122,69 @@ def main(
             problem_name=problem_name,
         ))
     # Seed all islands with the Euclidean-scored template (sample 0).
-    try:
-        founder_func = copy.deepcopy(template.get_function(function_to_evolve))
+    # Skip when resuming — islands already contain programs from the checkpoint.
+    if already_seeded:
+        print('[Pipeline] Resumed from checkpoint — skipping island seeding.')
+    else:
+        try:
+            founder_func = copy.deepcopy(template.get_function(function_to_evolve))
 
-        system_code_str = str(founder_func)
-        lowered = system_code_str.lower()
-        ns: dict[str, Any] = {"np": np}
-        if "torch" in lowered:
-            import torch as _torch  # type: ignore[import-not-found]
-            ns["torch"] = _torch
-        exec(system_code_str, ns)  # noqa: S102
-        system_func = ns[function_to_evolve]
+            system_code_str = str(founder_func)
+            lowered = system_code_str.lower()
+            ns: dict[str, Any] = {"np": np}
+            if "torch" in lowered:
+                import torch as _torch  # type: ignore[import-not-found]
+                ns["torch"] = _torch
+            exec(system_code_str, ns)  # noqa: S102
+            system_func = ns[function_to_evolve]
 
-        use_gpu_backend = ("import torch" in lowered) or ("torch." in lowered)
+            use_gpu_backend = ("import torch" in lowered) or ("torch." in lowered)
 
-        founder_param_dists = param_utils.get_default_param_distributions(problem_name)
+            founder_param_dists = param_utils.get_default_param_distributions(problem_name)
 
-        t0 = time.time()
-        dist = None
-        if founder_param_dists is not None:
-            dist = _euclidean_score.evaluate_system_euclidean_distance(
-                system_func=system_func,
-                problem_name=problem_name,
-                param_distributions=founder_param_dists,
-                verbose=False,
-                sample_order=0,
-                backend="gpu" if use_gpu_backend else "cpu",
-                standardization=True,
-            )
-        eval_time = time.time() - t0
+            t0 = time.time()
+            dist = None
+            if founder_param_dists is not None:
+                dist = _euclidean_score.evaluate_system_euclidean_distance(
+                    system_func=system_func,
+                    problem_name=problem_name,
+                    param_distributions=founder_param_dists,
+                    verbose=False,
+                    sample_order=0,
+                    backend="gpu" if use_gpu_backend else "cpu",
+                    standardization=True,
+                )
+            eval_time = time.time() - t0
 
-        if dist is None or not np.isfinite(dist):
-            score_value = 0.0
-        else:
-            score_value = -round(float(dist), 2)
+            if dist is None or not np.isfinite(dist):
+                score_value = 0.0
+            else:
+                score_value = -round(float(dist), 2)
 
-        founder_func.global_sample_nums = 0
-        founder_func.sample_time = None
-        founder_func.evaluate_time = eval_time
-        founder_func.param_distributions = founder_param_dists
-        founder_func.score = score_value
+            founder_func.global_sample_nums = 0
+            founder_func.sample_time = None
+            founder_func.evaluate_time = eval_time
+            founder_func.param_distributions = founder_param_dists
+            founder_func.score = score_value
 
-        if score_value is not None:
-            scores_per_test = {"euclidean_distance": score_value}
-            database.register_program(
-                founder_func,
-                island_id=None,  # seed *all* islands with the template
-                scores_per_test=scores_per_test,
-                profiler=profiler,
-                param_distributions=founder_param_dists,
-                global_sample_nums=0,
-                sample_time=None,
-                evaluate_time=eval_time,
-                llm_source="template",
-                llm_model_name=None,
-            )
-        elif profiler:
-            profiler.register_function(founder_func)
-    except Exception as e:
-        print(f"[Pipeline] Failed to seed islands with template: {e}")
+            if score_value is not None:
+                scores_per_test = {"euclidean_distance": score_value}
+                database.register_program(
+                    founder_func,
+                    island_id=None,  # seed *all* islands with the template
+                    scores_per_test=scores_per_test,
+                    profiler=profiler,
+                    param_distributions=founder_param_dists,
+                    global_sample_nums=0,
+                    sample_time=None,
+                    evaluate_time=eval_time,
+                    llm_source="template",
+                    llm_model_name=None,
+                )
+            elif profiler:
+                profiler.register_function(founder_func)
+        except Exception as e:
+            print(f"[Pipeline] Failed to seed islands with template: {e}")
 
     samplers = [sampler.Sampler(database, evaluators,
                                 config.samples_per_prompt,

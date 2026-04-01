@@ -236,7 +236,8 @@ Part 2 - Full parameter JSON (all parameters, not just changed):
 
 
 OUTPUT CHECKLIST (FOLLOW IN ORDER)
-1. Read the diagnosed failure modes and stat comparison
+1. Read the diagnosed failure modes and stat comparison and reason
+   about which parameters are most likely responsible
 2. Consult iteration history and reason from the ODE structure
    about which parameter changes led to log SL improvement
    and which directions to work on
