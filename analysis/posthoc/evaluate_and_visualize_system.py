@@ -389,7 +389,7 @@ def main():
 
         euclidean_distance = float(np.linalg.norm(s_sim - s_obs))
         print("-" * 84)
-        print(f"Euclidean distance (||s_sim - s_obs||_2): {euclidean_distance:.4f}")
+        print(f"Euclidean distance (||s_sim - s_obs||_2): {euclidean_distance:.2f}")
     else:
         print(f"\nObserved data file not found at {observed_data_path}; skipping summary stats comparison.")
 

@@ -18,5 +18,7 @@ logs/
 analysis/posthoc/inspect_system_from_log.py
 analysis/posthoc/generate_synthetic_data.py
 analysis/posthoc/generate_synthetic_data_from_obs_ic.py
+analysis/posthoc/compare_stats.py
+analysis/posthoc/syn_traj_visuals.py
 
 

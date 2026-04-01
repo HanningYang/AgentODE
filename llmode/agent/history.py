@@ -24,9 +24,15 @@ class ParamCandidate:
     params: Dict[str, Any]
 
     def to_dict(self) -> Dict[str, Any]:
+        stripped_params = {
+            k: {"mean": v["mean"], "sd": v["sd"]}
+            if isinstance(v, dict) and "mean" in v and "sd" in v
+            else v
+            for k, v in self.params.items()
+        }
         return {
             "log_sl": float(self.log_sl),
-            "params": self.params,
+            "params": stripped_params,
         }
 
 

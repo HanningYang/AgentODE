@@ -506,7 +506,7 @@ class ParameterAgent:
                 l2 = -float(dist)
                 if l2 >= best_island_score:
                     if DEBUG_PRINTS:
-                        _dbg(f"ParamAgent | sample={sample_order} | extending to {extended_max} steps (L2={dist:.3f})")
+                        _dbg(f"ParamAgent | sample={sample_order} | extending to {extended_max} steps (L2={dist:.2f})")
                     return True
         except Exception as e:
             if DEBUG_PRINTS:
