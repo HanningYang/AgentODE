@@ -17,22 +17,22 @@ from . import ts_features as tsf
 # ---------------------------------------------------------------------------
 
 TOOL_REGISTRY: Dict[str, Any] = {
-    "mean":                    tsf.mean,
-    "variance":                tsf.variance,
-    "skewness":                tsf.skewness,
-    "acf_lag1":                tsf.acf_lag1,
-    "acf_lag3":                tsf.acf_lag3,
-    "acf_1e_timescale":        tsf.acf_1e_timescale,
-    "dominant_frequency":      tsf.dominant_frequency,
-    "statav":                  tsf.statav,
-    "std_first_difference":    tsf.std_first_difference,
-    "permutation_entropy_m3":  tsf.permutation_entropy_m3,
-    "time_reversal_asymmetry": tsf.time_reversal_asymmetry,
-    "ar_coef_1":               tsf.ar_coef_1,
-    "ar_coef_2":               tsf.ar_coef_2,
-    "turning_point_rate":      tsf.turning_point_rate,
-    "spearman_trend":          tsf.spearman_trend,
-    "diff_corr":               tsf.diff_corr,
+    "within_patient_mean":             tsf.mean,
+    "within_patient_variance":         tsf.variance,
+    "within_patient_skewness":         tsf.skewness,
+    "acf_lag1":                        tsf.acf_lag1,
+    "acf_lag3":                        tsf.acf_lag3,
+    "acf_1e_timescale":                tsf.acf_1e_timescale,
+    "dominant_freq_normalized":        tsf.dominant_frequency,
+    "window_mean_variation_normalized": tsf.statav,
+    "std_first_diff_within":           tsf.std_first_difference,
+    "permutation_entropy_m3":          tsf.permutation_entropy_m3,
+    "time_reversal_asymmetry":         tsf.time_reversal_asymmetry,
+    "ar3_coef_1":                      tsf.ar_coef_1,
+    "ar3_coef_2":                      tsf.ar_coef_2,
+    "turning_point_rate":              tsf.turning_point_rate,
+    "spearman_trend":                  tsf.spearman_trend,
+    "first_diff_spearman_corr":        tsf.diff_corr,
 }
 
 
@@ -67,17 +67,14 @@ def format_stat_table(
 
     def _lookup_observed(tool_name: str, entry: Dict[str, Any]) -> float | None:
         # Map tool name to ts_stats "statistic".
+        # Tool names now match stat names except for these two.
         stat_key = tool_name
-        if tool_name == "dominant_frequency":
-            stat_key = "dominant_freq"
-        elif tool_name == "std_first_difference":
-            stat_key = "std_first_diff"
-        elif tool_name == "permutation_entropy_m3":
+        if tool_name == "permutation_entropy_m3":
             stat_key = "perm_entropy_m3"
         elif tool_name == "time_reversal_asymmetry":
             stat_key = "time_reversal_asym"
 
-        if tool_name == "diff_corr":
+        if tool_name == "first_diff_spearman_corr":
             var_x = str(entry.get("variable_x"))
             var_y = str(entry.get("variable_y"))
             # ts_stats uses "var1__var2" ordering.
@@ -91,12 +88,14 @@ def format_stat_table(
     rows: List[tuple[str, str, float | None, float | None]] = []
     for res in tool_results:
         tool_name = str(res.get("tool"))
-        if tool_name == "diff_corr":
+        if tool_name == "first_diff_spearman_corr":
             label = f"{res.get('variable_x')} vs {res.get('variable_y')}"
         else:
             label = str(res.get("variable"))
 
         obs_val = _lookup_observed(tool_name, res)
+        if obs_val is None or (isinstance(obs_val, float) and np.isnan(obs_val)):
+            continue
         syn_val = res.get("synthetic")
         rows.append((tool_name, label, obs_val, syn_val))
 
@@ -195,7 +194,7 @@ def execute_tool_calls(
         if fn is None:
             raise KeyError(f"Unknown tool {tool_name!r} in TOOL_REGISTRY.")
 
-        if tool_name == "diff_corr":
+        if tool_name == "first_diff_spearman_corr":
             var_x = arguments["variable_x"]
             var_y = arguments["variable_y"]
             idx_x = _get_axis_index(biomarker_order, var_x)

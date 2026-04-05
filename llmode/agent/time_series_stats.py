@@ -71,9 +71,9 @@ def compute_pairwise_correlations(
                 arr2 = np.array(diffs2)
                 corr, _ = spearmanr(arr1, arr2)
                 corr_val = float(corr) if not np.isnan(corr) else 0.0
-                results[f"diff_corr__{pair_label}"] = (corr_val, None)
+                results[f"first_diff_spearman_corr__{pair_label}"] = (corr_val, None)
             else:
-                results[f"diff_corr__{pair_label}"] = (np.nan, None)
+                results[f"first_diff_spearman_corr__{pair_label}"] = (np.nan, None)
 
     return results
 
@@ -95,61 +95,67 @@ def compute_all_stats(
 
     # Distribution
     # Distribution (compact subset)
-    add("distribution", "mean", tsf.mean(x))
-    add("distribution", "variance", tsf.variance(x))
-    add("distribution", "skewness", tsf.skewness(x))
+    add("distribution", "within_patient_mean", tsf.mean(x))
+    add("distribution", "within_patient_variance", tsf.variance(x))
+    add("distribution", "within_patient_skewness", tsf.skewness(x))
 
     # Autocorrelation (compact subset)
-    if require_length(x, 10, "ACF"):
+    # Original min: 10
+    if require_length(x, 3, "ACF"):
         add("autocorrelation", "acf_lag1", tsf.acf_lag1(x))
         add("autocorrelation", "acf_lag3", tsf.acf_lag3(x))
         one_e = tsf.acf_1e_timescale(x)
         add("autocorrelation", "acf_1e_timescale", one_e)
-        add("autocorrelation", "dominant_freq", tsf.dominant_frequency(x))
+        add("autocorrelation", "dominant_freq_normalized", tsf.dominant_frequency(x))
 
     # Stationarity
-    if require_length(x, 2 * 4, "stationarity"):
-        add("stationarity", "statav", tsf.statav(x))
-        add("stationarity", "std_first_diff", tsf.std_first_difference(x))
+    # Original min: 2 * 4 = 8
+    if require_length(x, 3, "stationarity"):
+        add("stationarity", "window_mean_variation_normalized", tsf.statav(x))
+        add("stationarity", "std_first_diff_within", tsf.std_first_difference(x))
 
     # Entropy and complexity
-    if require_length(x, 10, "entropy"):
+    # Original min: 10
+    if require_length(x, 3, "entropy"):
         add("entropy", "perm_entropy_m3", tsf.permutation_entropy_m3(x))
 
     # Nonlinear
-    if require_length(x, 10, "nonlinear"):
+    # Original min: 10
+    if require_length(x, 3, "nonlinear"):
         add("nonlinear", "time_reversal_asym", tsf.time_reversal_asymmetry(x))
 
     # Model fit
-    if require_length(x, ar_order + 5, "model-fit"):
-        add("model_fit", "ar_coef_1", tsf.ar_coef_1(x, order=ar_order))
-        add("model_fit", "ar_coef_2", tsf.ar_coef_2(x, order=ar_order))
+    # Original min: ar_order + 5
+    if require_length(x, 3, "model-fit"):
+        add("model_fit", "ar3_coef_1", tsf.ar_coef_1(x, order=ar_order))
+        add("model_fit", "ar3_coef_2", tsf.ar_coef_2(x, order=ar_order))
         add("model_fit", "turning_point_rate", tsf.turning_point_rate(x))
 
     # Trend
-    if require_length(x, 5, "trend"):
+    # Original min: 5
+    if require_length(x, 3, "trend"):
         add("trend", "spearman_trend", tsf.spearman_trend(x, time_index))
 
     return all_stats
 
 
 _PRECISION: Dict[str, int] = {
-    "mean": 3,
-    "variance": 3,
-    "skewness": 3,
+    "within_patient_mean": 3,
+    "within_patient_variance": 3,
+    "within_patient_skewness": 3,
     "acf_lag1": 4,
     "acf_lag3": 4,
     "acf_1e_timescale": 2,
-    "dominant_freq": 6,
-    "statav": 4,
-    "std_first_diff": 3,
+    "dominant_freq_normalized": 6,
+    "window_mean_variation_normalized": 4,
+    "std_first_diff_within": 3,
     "perm_entropy_m3": 4,
     "time_reversal_asym": 4,
-    "ar_coef_1": 4,
-    "ar_coef_2": 4,
+    "ar3_coef_1": 4,
+    "ar3_coef_2": 4,
     "turning_point_rate": 4,
     "spearman_trend": 4,
-    "diff_corr": 4,
+    "first_diff_spearman_corr": 4,
 }
 _DEFAULT_PRECISION = 4
 
@@ -241,8 +247,8 @@ def compute_population_stats_from_df(
             agg=agg,
             min_patients=min_patients,
         )
-        if len(traj) < 5:
-            continue
+        # if len(traj) < 5:
+        #     continue
 
         x = traj.values.astype(float)
         time_index = traj.index.values.astype(float)

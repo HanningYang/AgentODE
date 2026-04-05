@@ -203,7 +203,7 @@ class ParameterAgent:
                         f"logSL=None  best={best_str}  "
                         f"no_improve={no_improve_count}/{patience}  null_count={null_score_count}/{patience}"
                     )
-                if null_score_count >= patience:
+                if no_improve_count >= patience:
                     break
             else:
                 new_score_val = float(new_score)
@@ -242,7 +242,7 @@ class ParameterAgent:
                         f"logSL={new_score_val:.3f}  best={best_str}  "
                         f"no_improve={no_improve_count}/{patience}  null_count={null_score_count}/{patience}"
                     )
-                if best_score is not None and no_improve_count >= patience:
+                if no_improve_count >= patience:
                     break
 
             steps_done += 1
@@ -599,6 +599,9 @@ class ParameterAgent:
 
         try:
             raw = prompt_builder.extract_json_from_llm_output(llm_output)
+            # Support new output contract: {"summary": "...", "params": {...}}
+            if "params" in raw:
+                raw = raw["params"]
             return param_utils.validate_param_distributions_format(raw)
         except Exception as e:
             print(f"[ParamAgent] Failed to parse parameter JSON: {e}")

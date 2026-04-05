@@ -38,6 +38,7 @@ from llmode.metrics.euclidean_score import evaluate_system_euclidean_distance
 def load_function_from_log(
     log_path: str,
     sample_order: int,
+    verbose: bool = True,
 ) -> Tuple[Callable, Optional[dict]]:
     """Load an ODE `system` function and its parameter priors from the log.
 
@@ -57,9 +58,10 @@ def load_function_from_log(
     lowered = function_str.lower()
     is_torch_system = ("import torch" in lowered) or ("torch." in lowered)
 
-    print('Function:')
-    print(function_str)
-    print(64*'-')
+    if verbose:
+        print('Function:')
+        print(function_str)
+        print(64*'-')
     param_distributions = data.get('param_distributions')
 
     # Execute the function definition in an isolated namespace.

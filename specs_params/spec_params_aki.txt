@@ -38,27 +38,15 @@ PRIOR POLICY (HARD)
 
 
 OUTPUT CONTRACT
-Return output in two parts only:
- 
-Part 1 - Calibration Summary (150 words max):
-A single paragraph summarising your overall calibration strategy, timescale choices, any assumptions made about ODE structure, and how the observed visualisations informed your prior choices.
+Return a single JSON block:
 
-Part 2 - JSON block (strict format):
- 
 {
-  "0": {
-    "mean": ...,
-    "sd": ...,
-    "units": "...",
-    "rationale": "..."
-  },
-  "1": {
-    "mean": ...,
-    "sd": ...,
-    "units": "...",
-    "rationale": "..."
-  },
-  ...
+  "summary": "One sentence describing the overall calibration strategy and key assumptions.",
+  "params": {
+    "0": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    "1": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    ...
+  }
 }
 
 
@@ -102,14 +90,17 @@ PRIOR POLICY (HARD)
 
 
 OUTPUT CONTRACT
-Part 1 - Correction Summary (100 words max):
-A single paragraph describing which implausibilities were identified,
-which parameters were corrected, and why.
+Return a single JSON block containing ALL parameters, not just corrected ones.
+Unchanged parameters must still appear with their current mean, sd, units, and rationale:
 
-Part 2 - Full parameter JSON (all parameters, not just changed):
 {
-  "0": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
-  ...
+  "summary": "One sentence describing which parameters were corrected, and why.
+",
+  "params": {
+    "0": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    "1": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    ...
+  }
 }
 
 
@@ -130,6 +121,12 @@ Your task is to identify the top failure modes between the observed and syntheti
 
 
 [DIAGNOSIS]
+STAT INTERPRETATION NOTE
+All single-variable statistics are computed per patient then averaged 
+across patients. Cross-variable statistics are computed per patient 
+pair then averaged.
+
+
 COMPARISON VISUALISATIONS (observed vs synthetic)
 The following plots compare the observed patient cohort against the
 synthetic trajectories generated from the best performing parameter
@@ -157,11 +154,27 @@ All parameters follow LogNormal distributions. Means and standard
 deviations are reported in linear space.
 
 
-INSTRUCTIONS
-Examine the comparison plots to identify both clear failure modes
-and potential areas of concern. Select all tools that would provide
-useful diagnostic information for the identified and suspected
-mismatches — be thorough but avoid redundant statistics.
+
+INSTRUCTIONS (CRITICAL)
+Reason from AKI pathophysiology and the ODE structure as your
+primary diagnostic framework. Before examining the plots, consider
+what the disease process implies for each biomarker — expected
+trajectory shape, recovery dynamics, sources of inter-patient
+heterogeneity, and coupling between biomarkers.
+
+Use the comparison plots to ground this reasoning in the observed
+cohort — what dynamics are actually present in the data and what
+do they reveal about the patient population.
+
+Then compare against the synthetic trajectories — identify where
+the synthetic distribution fails to reproduce the observed dynamics,
+and reason from the ODE structure about which parameter roles are
+most likely responsible for each misalignment. Consider what
+dynamics the current parameter distributions are implicitly
+assuming and whether those assumptions are physiologically justified.
+
+Request ALL tools that would confirm or challenge your mechanistic
+hypotheses — not just tools that describe the visual mismatch.
 
 
 OUTPUT CONTRACT
@@ -185,17 +198,44 @@ OUTPUT CONTRACT
 }
 
 
-OUTPUT CHECKLIST (FOLLOW IN ORDER)
-1. Examine all four comparison plots
-2. Identify the top failure modes from the visual evidence
-3. Call the appropriate tools
-4. Return the output contract JSON — no additional prose after
 
 [UPDATE_TASK]
 Your task is to propose updated parameter distributions that address the diagnosed failure modes and improve alignment between the synthetic and observed trajectories of Creatinine, BUN, and Potassium for acute kidney injury (AKI) over the first 7 days (168 hours) after hospital admission.
 
 
 [UPDATE]
+INSTRUCTIONS (CRITICAL)
+Your primary objective is to recover the true underlying dynamics
+of AKI, including the full heterogeneity of patient responses.
+Parameter distributions must be both physiologically meaningful
+and produce synthetic trajectories that align with the observed
+data in terms of dynamics, population spread, and statistical
+properties.
+
+Reason in the following order:
+
+First, interpret the diagnosed failure modes mechanistically.
+For each failure mode, reason from AKI pathophysiology and the
+ODE structure about what biological process is being
+misrepresented. A failure mode that cannot be explained
+mechanistically should be treated with caution.
+
+Second, trace each mechanistic interpretation back to the ODE
+structure. Identify which parameters govern the misrepresented
+process and what their current distributions imply about the
+assumed patient population.
+
+Third, consult the iteration history to understand what previous
+parameter changes revealed about the system dynamics. Use this
+as evidence about which directions genuinely improve the
+mechanistic representation rather than merely shifting trajectories.
+
+Fourth, propose updated distributions that recover the missing
+dynamics and improve statistical alignment. Every proposed change
+must have a mechanistic justification rooted in AKI pathophysiology
+and the ODE structure.
+
+
 DIAGNOSED FAILURE MODES
 The following failure modes and summary statistics were diagnosed
 from the best performing parameter distributions so far.
@@ -204,6 +244,10 @@ from the best performing parameter distributions so far.
 
 
 STAT COMPARISON
+All statistics below are computed per patient then averaged across 
+patients. Cross-variable statistics are computed per patient pair 
+then averaged.
+
 {stat_table}
 
 
@@ -224,22 +268,14 @@ PRIOR POLICY (HARD)
 
 
 OUTPUT CONTRACT
-Part 1 - Update Summary (150 words max):
-A single paragraph describing what changed, which failure modes
-are being addressed, and why.
+Return a single JSON block containing ALL parameters, not just updated ones.
+Unchanged parameters must still appear with their current mean, sd, units, and rationale:
 
-Part 2 - Full parameter JSON (all parameters, not just changed):
 {
-  "0": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
-  ...
+  "summary": "One sentence describing the key parameter changes made and why.",
+  "params": {
+    "0": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    "1": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    ...
+  }
 }
-
-
-OUTPUT CHECKLIST (FOLLOW IN ORDER)
-1. Read the diagnosed failure modes and stat comparison and reason
-   about which parameters are most likely responsible
-2. Consult iteration history and reason from the ODE structure
-   about which parameter changes led to log SL improvement
-   and which directions to work on
-3. Propose updated mean and SD for implicated parameters
-4. Return the output contract — no additional prose after

@@ -36,7 +36,7 @@ class ExperienceBufferConfig:
     functions_per_prompt: int = 2
     num_islands: int = 10 
     reset_period: int = 4 * 60 * 60
-    cluster_sampling_temperature_init: float = 0.6 # 0.8 # 0.1
+    cluster_sampling_temperature_init: float = 0.3 # 0.8 # 0.1
     cluster_sampling_temperature_period: int = 30_000
 
 
@@ -123,7 +123,7 @@ class Config:
     param_optim_rel_improvement: float = 0.1
     param_optim_extended_steps: int = 20
 
-    trajectory_bin_width: float = 24.0
+    trajectory_bin_width: float = 14.0
 
 
 @dataclasses.dataclass()

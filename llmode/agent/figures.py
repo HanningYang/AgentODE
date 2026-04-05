@@ -16,6 +16,17 @@ import matplotlib.pyplot as plt
 import scipy.stats
 from matplotlib.lines import Line2D
 
+from llmode.config import Config
+
+_DEFAULT_CONFIG = Config()
+
+
+def _resolve_bin_width(bin_width: Optional[float]) -> float:
+    """Return bin_width, falling back to Config.trajectory_bin_width."""
+    if bin_width is not None:
+        return bin_width
+    return _DEFAULT_CONFIG.trajectory_bin_width
+
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Return a copy with stripped, lower-cased column names."""
@@ -206,7 +217,7 @@ def generate_observed_vs_synthetic_figures(
     problem_name: str,
     synthetic_df: pd.DataFrame,
     vars: Optional[Iterable[str]] = None,
-    bin_width: float = 24.0,
+    bin_width: Optional[float] = None,
     umap_n_neighbors: int = 15,
     umap_min_dist: float = 0.1,
     umap_metric: str = "euclidean",
@@ -222,6 +233,7 @@ def generate_observed_vs_synthetic_figures(
             numeric columns in the observed data (excluding `id`, `t`)
             are auto-detected and intersected with the synthetic columns.
         bin_width: Time bin width for mean-trajectory and stratified plots.
+            Defaults to ``Config.trajectory_bin_width`` when *None*.
         umap_n_neighbors, umap_min_dist, umap_metric: UMAP hyperparameters.
 
     Returns:
@@ -229,6 +241,8 @@ def generate_observed_vs_synthetic_figures(
             "mean_trajectory", "umap" (optional), "faceted_by_baseline",
             "diff_corr_heatmap".
     """
+    bin_width = _resolve_bin_width(bin_width)
+
     # Load observed data
     obs_path = os.path.join("data", problem_name, f"{problem_name}.csv")
     obs_df = pd.read_csv(obs_path)
@@ -478,4 +492,238 @@ def generate_observed_vs_synthetic_figures(
     return figures
 
 
-__all__ = ["generate_observed_vs_synthetic_figures"]
+def plot_distribution_boxplot_comparison(
+    problem_name: str,
+    synthetic_df: pd.DataFrame,
+    var: str,
+    bin_width: Optional[float] = None,
+    time_unit: str = "h",
+    y_label: Optional[str] = None,
+    title: Optional[str] = None,
+    dark_theme: bool = True,
+) -> bytes:
+    """Generate a paired box plot comparing observed vs synthetic distributions over time.
+
+    Each time bin shows two side-by-side boxes: blue = observed, red = synthetic.
+    Box spans IQR (25–75 %ile), centre bar = median, dashed whiskers = 10–90 %ile.
+    Solid lines connect the medians across bins.
+
+    Args:
+        problem_name: Used to load observed data from
+            ``data/<problem_name>/<problem_name>.csv``.
+        synthetic_df: Long-format synthetic data with columns ``id``, ``t``, and
+            at least the column named by *var*.
+        var: Biomarker column to visualise (must exist in both datasets after
+            column-name normalisation).
+        bin_width: Width of each time bin (same units as the ``t`` column).
+            Defaults to ``Config.trajectory_bin_width`` when *None*.
+        time_unit: Unit suffix appended to bin labels (e.g. ``"h"`` → "0-14h").
+        y_label: Y-axis label.  Defaults to the variable name.
+        title: Figure title.  Defaults to
+            "``<Var>`` distribution over time — observed vs synthetic".
+        dark_theme: If True (default), renders with a dark background matching
+            the style shown in the screenshot.
+
+    Returns:
+        PNG image as raw bytes.
+    """
+    import matplotlib.patches as mpatches
+
+    bin_width = _resolve_bin_width(bin_width)
+
+    # ── Load & normalise ──────────────────────────────────────────────────────
+    obs_path = os.path.join("data", problem_name, f"{problem_name}.csv")
+    obs = _normalize_columns(pd.read_csv(obs_path))
+    synth = _normalize_columns(synthetic_df)
+    var = var.strip().lower()
+
+    if var not in obs.columns:
+        raise ValueError(f"Variable '{var}' not found in observed data columns: {list(obs.columns)}")
+    if var not in synth.columns:
+        raise ValueError(f"Variable '{var}' not found in synthetic data columns: {list(synth.columns)}")
+
+    n_obs_patients = int(obs["id"].nunique()) if "id" in obs.columns else len(obs)
+    n_syn_patients = int(synth["id"].nunique()) if "id" in synth.columns else len(synth)
+
+    # ── Bin both datasets ─────────────────────────────────────────────────────
+    obs_b = _bin_trajectories(obs, bin_width)
+    synth_b = _bin_trajectories(synth, bin_width)
+
+    # ── Compute per-bin percentile statistics ─────────────────────────────────
+    pcts = (10, 25, 50, 75, 90)
+
+    def _pct_stats(df_binned: pd.DataFrame) -> pd.DataFrame:
+        rows = []
+        for t_bin, grp in df_binned.groupby("t_bin", observed=False):
+            vals = grp[var].dropna().to_numpy(dtype=float)
+            if len(vals) < 2:
+                continue
+            p = np.percentile(vals, pcts)
+            lo = float(t_bin.left)
+            hi = float(t_bin.right)
+            rows.append(
+                {
+                    "t_bin": t_bin,
+                    "label": f"{int(lo)}-{int(hi)}{time_unit}",
+                    "p10": p[0],
+                    "p25": p[1],
+                    "p50": p[2],
+                    "p75": p[3],
+                    "p90": p[4],
+                    "n": len(vals),
+                }
+            )
+        return pd.DataFrame(rows)
+
+    obs_stats = _pct_stats(obs_b)
+    syn_stats = _pct_stats(synth_b)
+
+    # Align on shared bin labels
+    all_labels = obs_stats["label"].tolist()
+    obs_stats = obs_stats.set_index("label")
+    syn_stats = syn_stats.set_index("label")
+    shared = [lb for lb in all_labels if lb in syn_stats.index]
+    if not shared:
+        raise ValueError("No shared time bins between observed and synthetic data.")
+
+    obs_stats = obs_stats.loc[shared]
+    syn_stats = syn_stats.loc[shared]
+    xs = np.arange(len(shared))
+
+    # ── Colours ───────────────────────────────────────────────────────────────
+    obs_color = "#4A90D9"   # blue
+    syn_color = "#E24B4A"   # red/salmon
+    box_half = 0.18         # half-width of each box in data units
+    offset = 0.22           # centre offset from integer tick
+
+    # ── Draw ──────────────────────────────────────────────────────────────────
+    style_ctx = plt.style.context("dark_background" if dark_theme else "default")
+    with style_ctx:
+        fig, ax = plt.subplots(figsize=(max(10, len(shared) * 0.85), 6))
+
+        def _draw_box(ax, x_centre, stats_row, color):
+            p10, p25, p50, p75, p90 = (
+                stats_row["p10"],
+                stats_row["p25"],
+                stats_row["p50"],
+                stats_row["p75"],
+                stats_row["p90"],
+            )
+            # IQR box
+            box = mpatches.FancyBboxPatch(
+                (x_centre - box_half, p25),
+                2 * box_half,
+                p75 - p25,
+                boxstyle="square,pad=0",
+                linewidth=1.5,
+                edgecolor=color,
+                facecolor=color + "44",  # ~27% alpha hex
+            )
+            ax.add_patch(box)
+            # Median line
+            ax.plot(
+                [x_centre - box_half, x_centre + box_half],
+                [p50, p50],
+                color=color,
+                lw=2.0,
+                solid_capstyle="butt",
+            )
+            # Whiskers (10-90)
+            for p_end, p_box in [(p10, p25), (p90, p75)]:
+                ax.plot(
+                    [x_centre, x_centre],
+                    [p_end, p_box],
+                    color=color,
+                    lw=1.2,
+                    linestyle="--",
+                )
+                ax.plot(
+                    [x_centre - box_half * 0.55, x_centre + box_half * 0.55],
+                    [p_end, p_end],
+                    color=color,
+                    lw=1.2,
+                )
+
+        for i, label in enumerate(shared):
+            _draw_box(ax, xs[i] - offset, obs_stats.loc[label], obs_color)
+            _draw_box(ax, xs[i] + offset, syn_stats.loc[label], syn_color)
+
+        # Median connecting lines
+        ax.plot(
+            xs - offset,
+            obs_stats["p50"].to_numpy(dtype=float),
+            color=obs_color,
+            lw=1.8,
+            label="Obs median",
+        )
+        ax.plot(
+            xs + offset,
+            syn_stats["p50"].to_numpy(dtype=float),
+            color=syn_color,
+            lw=1.8,
+            label="Syn median",
+        )
+
+        # ── Axes formatting ───────────────────────────────────────────────────
+        ax.set_xticks(xs)
+        ax.set_xticklabels(shared, fontsize=9)
+        ax.set_xlim(-0.6, len(shared) - 0.4)
+        ax.set_ylim(bottom=0)
+        ax.set_ylabel(y_label or var.replace("_", " ").capitalize(), fontsize=11)
+        ax.grid(True, axis="y", alpha=0.2, linestyle="--")
+        ax.spines[["top", "right"]].set_visible(False)
+
+        # ── Title and legend ──────────────────────────���───────────────────────
+        ax.set_title(
+            title or f"{var.replace('_', ' ').capitalize()} distribution over time"
+                      " \u2014 observed vs synthetic",
+            fontsize=13,
+            fontweight="bold",
+            pad=12,
+        )
+
+        # Legend (top-right, outside plot)
+        legend_patches = [
+            mpatches.Patch(facecolor=obs_color + "44", edgecolor=obs_color,
+                           label=f"Observed (n={n_obs_patients})"),
+            mpatches.Patch(facecolor=syn_color + "44", edgecolor=syn_color,
+                           label=f"Synthetic (n={n_syn_patients})"),
+        ]
+        legend_lines = [
+            Line2D([0], [0], color=obs_color, lw=1.8, label="Obs median"),
+            Line2D([0], [0], color=syn_color, lw=1.8, label="Syn median"),
+            Line2D([0], [0], color="grey", lw=1.2, linestyle="--",
+                   label="10\u201390% whisker"),
+        ]
+        ax.legend(
+            handles=legend_patches + legend_lines,
+            loc="upper right",
+            fontsize=9,
+            framealpha=0.3,
+            ncol=2,
+        )
+
+        # ── Caption ───────────────────────────────────────────────────────────
+        caption = (
+            "Each time bin shows two paired boxes side by side: "
+            "\u25a0\u00a0blue\u00a0=\u00a0observed,\u00a0"
+            "\u25a0\u00a0red\u00a0=\u00a0synthetic.\u2002"
+            "Box spans IQR (25\u201375%), horizontal bar = median, "
+            "whiskers = 10th\u201390th percentile."
+        )
+        fig.text(
+            0.5,
+            -0.04,
+            caption,
+            ha="center",
+            va="top",
+            fontsize=8,
+            color="grey",
+            wrap=True,
+        )
+
+        plt.tight_layout()
+        return _fig_to_png_bytes(fig)
+
+
+__all__ = ["generate_observed_vs_synthetic_figures", "plot_distribution_boxplot_comparison"]

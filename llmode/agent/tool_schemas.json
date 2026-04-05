@@ -2,8 +2,8 @@
   {
     "type": "function",
     "function": {
-      "name": "mean",
-      "description": "Compute the arithmetic mean of a time-ordered series for a specified variable.",
+      "name": "within_patient_mean",
+      "description": "Compute the arithmetic mean of a time-ordered series for a specified variable, computed per patient then averaged across patients.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -19,8 +19,8 @@
   {
     "type": "function",
     "function": {
-      "name": "variance",
-      "description": "Compute the unbiased sample variance (ddof=1) of a time-ordered series for a specified variable.",
+      "name": "within_patient_variance",
+      "description": "Compute the unbiased sample variance (ddof=1) of a time-ordered series for a specified variable, computed per patient then averaged across patients.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -36,8 +36,8 @@
   {
     "type": "function",
     "function": {
-      "name": "skewness",
-      "description": "Compute Fisher-Pearson skewness of a time-ordered series for a specified variable.",
+      "name": "within_patient_skewness",
+      "description": "Compute Fisher-Pearson skewness of a time-ordered series for a specified variable, computed per patient then averaged across patients.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -104,8 +104,8 @@
   {
     "type": "function",
     "function": {
-      "name": "dominant_frequency",
-      "description": "Compute the dominant frequency of a series via the power spectrum for a specified variable.",
+      "name": "dominant_freq_normalized",
+      "description": "Compute the dominant frequency of a series via the power spectrum for a specified variable, in cycles per sample (normalized frequency).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -121,7 +121,7 @@
   {
     "type": "function",
     "function": {
-      "name": "statav",
+      "name": "window_mean_variation_normalized",
       "description": "Compute variation of window means normalized by global standard deviation as a stationarity measure for a specified variable.",
       "parameters": {
         "type": "object",
@@ -138,7 +138,7 @@
   {
     "type": "function",
     "function": {
-      "name": "std_first_difference",
+      "name": "std_first_diff_within",
       "description": "Compute the standard deviation of first differences of a time series for a specified variable.",
       "parameters": {
         "type": "object",
@@ -189,8 +189,8 @@
   {
     "type": "function",
     "function": {
-      "name": "ar_coef_1",
-      "description": "Compute the first autoregressive coefficient from a fitted AR model for a specified variable.",
+      "name": "ar3_coef_1",
+      "description": "Compute the first autoregressive coefficient from a fitted AR(3) model for a specified variable.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -206,8 +206,8 @@
   {
     "type": "function",
     "function": {
-      "name": "ar_coef_2",
-      "description": "Compute the second autoregressive coefficient from a fitted AR model for a specified variable.",
+      "name": "ar3_coef_2",
+      "description": "Compute the second autoregressive coefficient from a fitted AR(3) model for a specified variable.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -257,7 +257,7 @@
   {
     "type": "function",
     "function": {
-      "name": "diff_corr",
+      "name": "first_diff_spearman_corr",
       "description": "Compute Spearman correlation between first differences of two aligned variable time series.",
       "parameters": {
         "type": "object",

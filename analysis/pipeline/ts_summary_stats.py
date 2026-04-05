@@ -1,10 +1,11 @@
 """CLI for computing population-level time series summary statistics.
 
 Usage:
-    python -m analysis.ts_summary_stats --data data/aki/aki.csv
+    python -m analysis.pipeline.ts_summary_stats --problem_name aki
 """
 
 import argparse
+import os
 
 from llmode.agent.time_series_stats import save_observed_stats
 
@@ -14,7 +15,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compute population-level time series summary statistics.",
     )
-    parser.add_argument("--data", required=True, help="Path to input CSV file.")
+    parser.add_argument("--problem_name", required=True, help="Problem name (e.g. aki). CSV read from data/<problem_name>/<problem_name>.csv.")
     parser.add_argument("--time_col", default="t", help="Name of time column.")
     parser.add_argument("--id_col", default="id", help="Name of identifier column.")
     parser.add_argument(
@@ -35,23 +36,15 @@ def main() -> None:
         type=int,
         help="Minimum number of patients contributing at a time point.",
     )
-    parser.add_argument(
-        "--out_root",
-        default="workspace/aki/stats",
-        help="Root folder for saving statistics (default: workspace/<problem_name>/stats).",
-    )
-    parser.add_argument(
-        "--dataset_name",
-        default="",
-        help="Optional dataset name for the output subfolder. "
-        "Defaults to empty string, which saves directly under out_root.",
-    )
     args = parser.parse_args()
 
+    data_path = os.path.join("data", args.problem_name, f"{args.problem_name}.csv")
+    out_root = os.path.join("workspace", args.problem_name, "stats")
+
     csv_path, json_path = save_observed_stats(
-        data_path=args.data,
-        out_root=args.out_root,
-        dataset_name=args.dataset_name,
+        data_path=data_path,
+        out_root=out_root,
+        dataset_name="",
         time_col=args.time_col,
         id_col=args.id_col,
         agg=args.agg,
