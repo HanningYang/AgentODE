@@ -226,18 +226,6 @@ Returns: Summary statistics comparison (observed vs simulated), synthetic log-li
 Adjust pipeline parameters in [config.py](agentode/config.py).
 
 
-
-## Citation
-**This project adapts methods from:**
-```bibtex
-@article{shojaee2024llm,
-  title={Llm-sr: Scientific equation discovery via programming with large language models},
-  author={Shojaee, Parshin and Meidani, Kazem and Gupta, Shashank and Farimani, Amir Barati and Reddy, Chandan K},
-  journal={arXiv preprint arXiv:2404.18400},
-  year={2024}
-}
-```
-
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for full details.
