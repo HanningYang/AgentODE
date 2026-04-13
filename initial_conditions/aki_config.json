@@ -58,6 +58,7 @@
     "time_span": [0, 168],
     "time_unit": "hours",
     "time_points": 30,
+    "trajectory_bin_width": 14.0,
     "description": "7 days (168 hours) after hospital admission"
   },
   "correlation_matrix": [

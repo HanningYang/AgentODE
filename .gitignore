@@ -20,5 +20,11 @@ analysis/posthoc/generate_synthetic_data.py
 analysis/posthoc/generate_synthetic_data_from_obs_ic.py
 analysis/posthoc/compare_stats.py
 analysis/posthoc/syn_traj_visuals.py
+analysis/posthoc/compare_population_stats.py
+analysis/posthoc/inspect_iterations.py
+analysis/posthoc/print_logsl.py
+
+# Workspace logs
+workspace/*/logs/
 
 

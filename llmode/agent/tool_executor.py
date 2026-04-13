@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Mapping, Sequence
 
 import json
 import os
+from pathlib import Path
 import numpy as np
 
 from llmode.ode import initial_condition_utils
@@ -17,22 +18,56 @@ from . import ts_features as tsf
 # ---------------------------------------------------------------------------
 
 TOOL_REGISTRY: Dict[str, Any] = {
-    "within_patient_mean":             tsf.mean,
-    "within_patient_variance":         tsf.variance,
-    "within_patient_skewness":         tsf.skewness,
-    "acf_lag1":                        tsf.acf_lag1,
-    "acf_lag3":                        tsf.acf_lag3,
-    "acf_1e_timescale":                tsf.acf_1e_timescale,
-    "dominant_freq_normalized":        tsf.dominant_frequency,
-    "window_mean_variation_normalized": tsf.statav,
-    "std_first_diff_within":           tsf.std_first_difference,
-    "permutation_entropy_m3":          tsf.permutation_entropy_m3,
-    "time_reversal_asymmetry":         tsf.time_reversal_asymmetry,
-    "ar3_coef_1":                      tsf.ar_coef_1,
-    "ar3_coef_2":                      tsf.ar_coef_2,
-    "turning_point_rate":              tsf.turning_point_rate,
-    "spearman_trend":                  tsf.spearman_trend,
-    "first_diff_spearman_corr":        tsf.diff_corr,
+    "mean":               tsf.mean,
+    "std":                tsf.std,
+    "iqr":                tsf.iqr,
+    "skewness":           tsf.skewness,
+    "outlier_frac":       tsf.outlier_frac,
+    "acf_lag1":           tsf.acf_lag1,
+    "acf_first_zero":     tsf.acf_first_zero,
+    "dominant_freq":      tsf.dominant_freq,
+    "spectral_entropy":   tsf.spectral_entropy,
+    "statav":             tsf.statav,
+    "std_first_diff":     tsf.std_first_difference,
+    "perm_entropy_m3":    tsf.permutation_entropy_m3,
+    "lz_complexity":      tsf.lempel_ziv_complexity,
+    "dfa_alpha":          tsf.dfa_alpha,
+    "spectral_slope":     tsf.spectral_slope,
+    "ar_coef_1":          tsf.ar_coef_1,
+    "exp_smooth_alpha":   tsf.exp_smoothing_alpha,
+    "turning_point_rate": tsf.turning_point_rate,
+    "spearman_trend":     tsf.spearman_trend,
+    "mean_crossing_rate": tsf.mean_crossing_rate,
+    "mean_abs_diff":      tsf.mean_abs_diff,
+    "level_corr":         tsf.level_corr,
+    "diff_corr":          tsf.diff_corr,
+}
+
+# Decimal places to use when formatting each statistic in the comparison table.
+_DECIMALS: Dict[str, int] = {
+    "mean":               3,
+    "std":                3,
+    "iqr":                3,
+    "skewness":           3,
+    "outlier_frac":       4,
+    "acf_lag1":           4,
+    "acf_first_zero":     2,
+    "dominant_freq":      6,
+    "spectral_entropy":   4,
+    "statav":             4,
+    "std_first_diff":     3,
+    "perm_entropy_m3":    4,
+    "lz_complexity":      4,
+    "dfa_alpha":          4,
+    "spectral_slope":     4,
+    "ar_coef_1":          4,
+    "exp_smooth_alpha":   4,
+    "turning_point_rate": 4,
+    "spearman_trend":     4,
+    "mean_crossing_rate": 4,
+    "mean_abs_diff":      3,
+    "level_corr":         4,
+    "diff_corr":          4,
 }
 
 
@@ -66,15 +101,10 @@ def format_stat_table(
         index[(stat, var)] = row.get("value")
 
     def _lookup_observed(tool_name: str, entry: Dict[str, Any]) -> float | None:
-        # Map tool name to ts_stats "statistic".
-        # Tool names now match stat names except for these two.
+        # Map tool name directly to ts_stats "statistic" field.
         stat_key = tool_name
-        if tool_name == "permutation_entropy_m3":
-            stat_key = "perm_entropy_m3"
-        elif tool_name == "time_reversal_asymmetry":
-            stat_key = "time_reversal_asym"
 
-        if tool_name == "first_diff_spearman_corr":
+        if tool_name in ("diff_corr", "level_corr"):
             var_x = str(entry.get("variable_x"))
             var_y = str(entry.get("variable_y"))
             # ts_stats uses "var1__var2" ordering.
@@ -84,11 +114,23 @@ def format_stat_table(
         var = str(entry.get("variable"))
         return index.get((stat_key, var.lower()))
 
+    # Deduplicate tool results: if the same (tool, variable) was called across
+    # multiple diagnosis turns, keep only the last occurrence (most recent).
+    seen: Dict[tuple[str, str], int] = {}
+    for i, res in enumerate(tool_results):
+        tool_name = str(res.get("tool"))
+        if tool_name in ("diff_corr", "level_corr"):
+            key = (tool_name, f"{res.get('variable_x')}__{res.get('variable_y')}")
+        else:
+            key = (tool_name, str(res.get("variable")))
+        seen[key] = i
+    deduped = [tool_results[i] for i in sorted(seen.values())]
+
     # Build rows: stat, variable label, observed, synthetic.
     rows: List[tuple[str, str, float | None, float | None]] = []
-    for res in tool_results:
+    for res in deduped:
         tool_name = str(res.get("tool"))
-        if tool_name == "first_diff_spearman_corr":
+        if tool_name in ("diff_corr", "level_corr"):
             label = f"{res.get('variable_x')} vs {res.get('variable_y')}"
         else:
             label = str(res.get("variable"))
@@ -110,11 +152,11 @@ def format_stat_table(
     obs_width = len(obs_col)
     syn_width = len(syn_col)
 
-    def _fmt_val(v: float | None) -> str:
+    def _fmt_val(v: float | None, decimals: int = 4) -> str:
         if v is None:
             return "NA"
         try:
-            return f"{float(v):.4f}"
+            return f"{float(v):.{decimals}f}"
         except (TypeError, ValueError):
             return "NA"
 
@@ -128,8 +170,9 @@ def format_stat_table(
 
     lines = [header, sep]
     for stat, var, obs_val, syn_val in rows:
-        obs_str = _fmt_val(obs_val)
-        syn_str = _fmt_val(syn_val)
+        decimals = _DECIMALS.get(stat, 4)
+        obs_str = _fmt_val(obs_val, decimals)
+        syn_str = _fmt_val(syn_val, decimals)
         lines.append(
             f"{stat:<{stat_width}}  "
             f"{var:<{var_width}}  "
@@ -194,7 +237,7 @@ def execute_tool_calls(
         if fn is None:
             raise KeyError(f"Unknown tool {tool_name!r} in TOOL_REGISTRY.")
 
-        if tool_name == "first_diff_spearman_corr":
+        if tool_name in ("diff_corr", "level_corr"):
             var_x = arguments["variable_x"]
             var_y = arguments["variable_y"]
             idx_x = _get_axis_index(biomarker_order, var_x)
@@ -235,9 +278,92 @@ def execute_tool_calls(
     return results
 
 
+_ITERATION_FILE_MAP: Dict[str, str] = {
+    "params":           "params.json",
+    "log_sl":           "log_sl.json",
+    "violation_report": "violation_report.json",
+}
+
+
+def execute_read_iteration(
+    iteration: int,
+    file: str,
+    experiment_dir: str,
+) -> dict:
+    """Read a specific file from a past iteration directory.
+
+    Args:
+        iteration: Integer iteration number (matches ``iter_N`` directory name).
+        file: Logical file key — one of ``"params"``, ``"log_sl"``,
+            ``"violation_report"``.
+        experiment_dir: Path to the sample directory
+            (e.g. ``workspace/aki/logs/run1/sample_0``).
+
+    Returns:
+        Parsed JSON content of the requested file, or an error dict if the
+        file does not exist.
+    """
+    filename = _ITERATION_FILE_MAP.get(file)
+    if filename is None:
+        return {
+            "error": (
+                f"Unknown file key {file!r}. "
+                f"Valid keys: {list(_ITERATION_FILE_MAP)}."
+            )
+        }
+
+    path = Path(experiment_dir) / f"iter_{iteration}" / filename
+    if not path.exists():
+        return {
+            "error": (
+                f"{file} is not available for iter_{iteration}. "
+                f"Check the iteration type in the index to see "
+                f"which files are available for this iteration type."
+            )
+        }
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def execute_filesystem_tool_calls(
+    tool_calls: List[Dict[str, Any]],
+    experiment_dir: str,
+) -> List[Dict[str, Any]]:
+    """Execute a batch of filesystem tool calls and return their results.
+
+    Args:
+        tool_calls: Parsed tool call objects from the LLM (same format as
+            ``extract_tool_calls`` output).
+        experiment_dir: Path to the sample directory passed to
+            ``execute_read_iteration``.
+
+    Returns:
+        List of dicts with ``tool``, ``arguments``, and ``result`` keys.
+    """
+    results = []
+    for call in tool_calls:
+        tool_name = str(call.get("tool", "")).split(".")[-1]
+        arguments = {k.lower(): v for k, v in (call.get("arguments") or {}).items()}
+
+        if tool_name == "read_iteration":
+            result = execute_read_iteration(
+                iteration=int(arguments.get("iteration", -1)),
+                file=str(arguments.get("file", "")),
+                experiment_dir=experiment_dir,
+            )
+        else:
+            result = {"error": f"Unknown filesystem tool {tool_name!r}."}
+
+        results.append({"tool": tool_name, "arguments": arguments, "result": result})
+
+    return results
+
+
 __all__ = [
     "TOOL_REGISTRY",
+    "_DECIMALS",
     "format_stat_table",
     "extract_tool_calls",
     "execute_tool_calls",
+    "execute_read_iteration",
+    "execute_filesystem_tool_calls",
 ]

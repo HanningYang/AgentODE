@@ -11,16 +11,18 @@ plausible interactions among the following biomarkers:
 The time units is in hours.
 
 HARD CONSTRAINT: 
-- The parameter array has at most MAX_NPARAMS = 25 slots.
+- The parameter array has at most MAX_NPARAMS = 15 slots.
 - Do NOT skip indices (e.g., using 12 while omitting 10 or 11 is invalid).
 - Use only as many parameters as necessary; avoid introducing redundant parameters.
-
+- Always index parameters and biomarkers with ellipsis notation
+  params[..., k] and biomarkers[..., k] — never use params[k]
+  or biomarkers[k] directly.
 """
 
 import torch
 
 # Initialize parameters
-MAX_NPARAMS = 25
+MAX_NPARAMS = 15
 params = torch.ones(MAX_NPARAMS)
 
 
@@ -33,7 +35,7 @@ def system(biomarkers: torch.Tensor, params: torch.Tensor, t: float) -> torch.Te
             [Creatinine, BUN, Potassium].
         params: Tensor of numeric constants or parameters to be optimized.
                 You must not use any params[k] with k >= MAX_NPARAMS;
-                using more than 25 parameters is invalid.
+                using more than 15 parameters is invalid.
     Returns:
         A torch tensor representing the temporal derivatives (d/dt)
         of the biomarkers.
@@ -43,61 +45,9 @@ def system(biomarkers: torch.Tensor, params: torch.Tensor, t: float) -> torch.Te
     BUN = biomarkers[..., 1]
     K = biomarkers[..., 2]
 
-    # ---- Renal recovery with injury feedback ----
-    R_min = params[..., 0]
-    R_max = params[..., 1]
-    k_rec = params[..., 2]
-
-    injury_Cr = torch.clamp(Cr - params[..., 19], min=0.0) / (params[..., 19] + 1e-6)
-    injury_BUN = torch.clamp(BUN - params[..., 20], min=0.0) / (params[..., 20] + 1e-6)
-    injury = torch.clamp(params[..., 21] * (injury_Cr + injury_BUN), min=0.0, max=0.9)
-
-    R_base = R_min + (R_max - R_min) * (1.0 - torch.exp(-k_rec * t))
-    R = torch.clamp(R_base * (1.0 - injury), min=0.05, max=1.2)
-
-    # ---- Creatinine ----
-    p_Cr = params[..., 3]
-    k_CrR = params[..., 4]
-    k_CrNR = params[..., 5]
-    Cr_ref = params[..., 6]
-    sat_Cr = 1.0 / (1.0 + params[..., 22] * torch.clamp(Cr - Cr_ref, min=0.0))
-    dCr = p_Cr - (k_CrNR + k_CrR * R * sat_Cr) * (Cr - Cr_ref)
-
-    # ---- BUN ----
-    p_BUN = params[..., 7]
-    k_BUNR = params[..., 8]
-    k_BUNNR = params[..., 9]
-    BUN_ref = params[..., 10]
-    reabs = params[..., 23] * (1.0 - torch.clamp(R, min=0.2, max=1.0)) * (BUN - BUN_ref)
-    dBUN = p_BUN - (k_BUNNR + k_BUNR * R) * (BUN - BUN_ref) + reabs
-
-    # ---- Potassium ----
-    K_ref = params[..., 11]
-    k_Kbuf = params[..., 12]
-    k_KR = params[..., 13]
-    s_K0 = params[..., 14]
-    s_Kcr = params[..., 15]
-    s_Kbun = params[..., 16]
-    Cr_sev0 = params[..., 17]
-    BUN_sev0 = params[..., 18]
-
-    acid_shift = (
-        params[..., 24]
-        * torch.clamp(BUN - BUN_sev0, min=0.0)
-        * (K_ref - K)
-    )
-    sev = (
-        torch.clamp(Cr - Cr_sev0, min=0.0) * s_Kcr
-        + torch.clamp(BUN - BUN_sev0, min=0.0) * s_Kbun
-    )
-    renal_excretion = k_KR * R * torch.clamp(K - K_ref, min=0.0)
-
-    dK = (
-        -k_Kbuf * (K - K_ref)
-        - renal_excretion
-        + (1.0 - torch.clamp(R, min=0.0, max=1.0)) * (s_K0 + sev)
-        + acid_shift
-    )
+    dCr = params[..., 0] - params[..., 1] * Cr
+    dBUN = params[..., 2] * Cr - params[..., 3] * BUN
+    dK = params[..., 4] * Cr - params[..., 5] * K
 
     d_biomarkers = torch.stack([dCr, dBUN, dK], dim=-1)
     return d_biomarkers

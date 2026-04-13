@@ -30,7 +30,7 @@ from llmode.core import sampler
 from llmode.core import profile
 from llmode.core import param_utils
 from llmode.core import checkpoint as checkpoint_lib
-from llmode.metrics import euclidean_score as _euclidean_score
+from llmode.metrics import mntd_score as _mntd_score
 
 
 def _extract_function_name(specification: str) -> str:
@@ -120,6 +120,7 @@ def main(
             timeout_seconds=config.evaluate_timeout_seconds,
             sandbox_class=class_config.sandbox_class,
             problem_name=problem_name,
+            log_dir=log_dir,
         ))
     # Seed all islands with the Euclidean-scored template (sample 0).
     # Skip when resuming — islands already contain programs from the checkpoint.
@@ -143,23 +144,52 @@ def main(
             founder_param_dists = param_utils.get_default_param_distributions(problem_name)
 
             t0 = time.time()
-            dist = None
-            if founder_param_dists is not None:
-                dist = _euclidean_score.evaluate_system_euclidean_distance(
-                    system_func=system_func,
+            score_value = None
+            try:
+                from llmode.agent.param_agent import ParameterAgent
+                agent = ParameterAgent(
+                    config=config,
                     problem_name=problem_name,
-                    param_distributions=founder_param_dists,
-                    verbose=False,
+                    log_dir=log_dir,
                     sample_order=0,
-                    backend="gpu" if use_gpu_backend else "cpu",
-                    standardization=True,
                 )
+                final_params, _ = agent.run(
+                    program_str=str(template),
+                    initial_params=founder_param_dists,
+                    sample_order=0,
+                    best_island_score=None,
+                )
+                if final_params is not None:
+                    founder_param_dists = final_params
+                    dist = _mntd_score.evaluate_system_mntd(
+                        system_func=system_func,
+                        problem_name=problem_name,
+                        param_distributions=final_params,
+                        verbose=False,
+                        sample_order=0,
+                        backend="gpu" if use_gpu_backend else "cpu",
+                        standardization=True,
+                    )
+                    if dist is not None and np.isfinite(dist):
+                        score_value = -round(float(dist), 2)
+            except Exception as e:
+                print(f"[Pipeline] ParameterAgent failed for template, falling back to default params: {e}")
+                if founder_param_dists is not None:
+                    dist = _mntd_score.evaluate_system_mntd(
+                        system_func=system_func,
+                        problem_name=problem_name,
+                        param_distributions=founder_param_dists,
+                        verbose=False,
+                        sample_order=0,
+                        backend="gpu" if use_gpu_backend else "cpu",
+                        standardization=True,
+                    )
+                    if dist is not None and np.isfinite(dist):
+                        score_value = -round(float(dist), 2)
             eval_time = time.time() - t0
 
-            if dist is None or not np.isfinite(dist):
+            if score_value is None:
                 score_value = 0.0
-            else:
-                score_value = -round(float(dist), 2)
 
             founder_func.global_sample_nums = 0
             founder_func.sample_time = None
@@ -168,7 +198,7 @@ def main(
             founder_func.score = score_value
 
             if score_value is not None:
-                scores_per_test = {"euclidean_distance": score_value}
+                scores_per_test = {"mntd_score": score_value}
                 database.register_program(
                     founder_func,
                     island_id=None,  # seed *all* islands with the template

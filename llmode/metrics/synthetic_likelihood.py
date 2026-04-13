@@ -520,6 +520,70 @@ class LogSyntheticLikelihood:
         details['simulated_stats'] = sim_stats
         return log_likelihood, details
 
+def build_log_sl_json_data(
+    log_likelihood: float,
+    details: Dict[str, np.ndarray],
+    s_obs: np.ndarray,
+    stat_names: List[str],
+    biomarker_names: List[str],
+) -> Dict:
+    """Build the ``log_sl.json`` data structure from core evaluation outputs.
+
+    Returns a dict with keys ``log_sl`` and ``components``, where
+    ``components`` is keyed by lowercase biomarker name and by
+    ``"cross_biomarker"`` for pair-wise stats.
+    """
+    mu_hat = details.get("mu_hat")
+    sim_stats = details.get("simulated_stats")
+    if mu_hat is None or sim_stats is None:
+        return {"log_sl": round(float(log_likelihood), 4), "components": {}}
+
+    syn_std = np.std(sim_stats, axis=0)
+    stat_index = {name: i for i, name in enumerate(stat_names)}
+
+    # Per-biomarker stat suffix → log_sl key mapping
+    _SUFFIX_TO_KEY = [
+        ("std_quantile_deg0", "quantile_poly_deg0"),
+        ("std_quantile_deg1", "quantile_poly_deg1"),
+        ("lag1_autocorr",     "acf_lag1"),
+        ("pop_trend_spearman","spearman_trend"),
+    ]
+
+    components: Dict = {}
+    for bio in biomarker_names:
+        bio_lower = bio.lower()
+        bio_data: Dict = {}
+        for suffix, log_key in _SUFFIX_TO_KEY:
+            idx = stat_index.get(f"{bio}_{suffix}")
+            if idx is not None:
+                bio_data[log_key] = {
+                    "observed":       round(float(s_obs[idx]), 2),
+                    "synthetic_mean": round(float(mu_hat[idx]), 2),
+                    "synthetic_std":  round(float(syn_std[idx]), 2),
+                }
+        components[bio_lower] = bio_data
+
+    cross: Dict = {}
+    for i, b1 in enumerate(biomarker_names):
+        for j, b2 in enumerate(biomarker_names):
+            if j <= i:
+                continue
+            idx = stat_index.get(f"diff_corr_{b1[:2]}_{b2[:2]}")
+            if idx is not None:
+                key = f"{b1.lower()}__{b2.lower()}"
+                cross[key] = {
+                    "observed":       round(float(s_obs[idx]), 2),
+                    "synthetic_mean": round(float(mu_hat[idx]), 2),
+                    "synthetic_std":  round(float(syn_std[idx]), 2),
+                }
+    components["cross_biomarker"] = cross
+
+    return {
+        "log_sl": round(float(log_likelihood), 2),
+        "components": components,
+    }
+
+
 def _evaluate_system_logsl_core(
     system_func: Callable[[np.ndarray, np.ndarray], np.ndarray],
     problem_name: str,

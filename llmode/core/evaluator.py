@@ -25,6 +25,8 @@ from typing import Any, Type
 from llmode.core import profile
 import multiprocessing
 
+import re
+
 import numpy as np
 
 from llmode.core import code_manipulation
@@ -241,6 +243,15 @@ class LocalSandbox(Sandbox):
             result_queue.put((None, False))
 
 
+def _normalize_torch_params_indexing(program: str, function_to_evolve: str) -> str:
+    """Rewrite bare `params[k]` → `params[..., k]` in torch-based system functions."""
+    lowered = program.lower()
+    if "import torch" not in lowered and "torch." not in lowered:
+        return program
+
+    return re.sub(r'\bparams\[(?!\.\.\.[\s,])(\d+)\]', r'params[..., \1]', program)
+
+
 def _calls_ancestor(program: str, function_to_evolve: str) -> bool:
     for name in code_manipulation.get_functions_called(program):
         if name.startswith(f'{function_to_evolve}_v'):
@@ -260,6 +271,7 @@ class Evaluator:
             timeout_seconds: int = 30,
             sandbox_class: Type[Sandbox] = Sandbox,
             problem_name: str | None = None,
+            log_dir: str | None = None,
     ):
         self._database = database
         self._template = template
@@ -268,6 +280,7 @@ class Evaluator:
         self._timeout_seconds = timeout_seconds
         self._sandbox = sandbox_class()  # retained for compatibility, unused
         self._problem_name = problem_name
+        self._log_dir = log_dir
 
     @staticmethod
     def _is_torch_system(system_code: str) -> bool:
@@ -283,6 +296,8 @@ class Evaluator:
     ) -> None:
         new_function, program = _sample_to_program(
             sample, version_generated, self._template, self._function_to_evolve)
+
+        program = _normalize_torch_params_indexing(program, self._function_to_evolve)
 
         global_sample_nums = kwargs.get('global_sample_nums', None)
         sample_time = kwargs.get('sample_time', None)
@@ -304,10 +319,10 @@ class Evaluator:
         sample_order = getattr(new_function, 'global_sample_nums', None)
 
         # Centralized evaluation: parameter optimization via ParameterAgent,
-        # followed by Euclidean-distance scoring in summary-stat space.
+        # followed by MNTD scoring in summary-stat space.
         try:
             from llmode.agent.param_agent import ParameterAgent
-            from llmode.metrics import euclidean_score as _euclidean_score
+            from llmode.metrics import mntd_score as _mntd_score
 
             problem_name = kwargs.get('problem_name') or self._problem_name
             if problem_name is None:
@@ -317,35 +332,49 @@ class Evaluator:
 
             config_obj = kwargs.get('config', None)
 
-            best_island_euclid_score: float | None = None
+            best_island_mntd_score: float | None = None
             if (
                 enable_param_optim
                 and isinstance(self._database, buffer.ExperienceBuffer)
                 and island_id is not None
             ):
                 try:
-                    best_island_euclid_score = self._database.get_best_island_score(
+                    best_island_mntd_score = self._database.get_best_island_score(
                         island_id,
-                        test_name='euclidean_distance',
+                        test_name='mntd_score',
                     )
                 except Exception:
-                    best_island_euclid_score = None
+                    best_island_mntd_score = None
 
-            agent = ParameterAgent(config=config_obj, problem_name=problem_name)
+            agent = ParameterAgent(
+                config=config_obj,
+                problem_name=problem_name,
+                log_dir=self._log_dir,
+                sample_order=sample_order,
+            )
             final_params, final_score = agent.run(
                 program_str=program,
                 initial_params=param_distributions if enable_param_optim else None,
                 sample_order=sample_order,
-                best_island_score=best_island_euclid_score if enable_param_optim else None,
+                best_island_score=best_island_mntd_score if enable_param_optim else None,
             )
 
             param_distributions = final_params
             kwargs['param_distributions'] = final_params
             new_function.param_distributions = final_params
 
-            if final_params is not None:
+            # Only assign an MNTD score to this structure when parameter
+            # inference produced at least one valid, finite logSL. If
+            # logSL was None (or non-finite) throughout optimisation,
+            # the structure is treated as violating constraints and left
+            # unscored in the evolutionary buffer.
+            if (
+                final_params is not None
+                and final_score is not None
+                and np.isfinite(final_score)
+            ):
                 try:
-                    # Re-compile to get system_func for Euclidean scoring.
+                    # Re-compile to get system_func for MNTD scoring.
                     _ns: dict[str, Any] = {}
                     exec(program, _ns)
                     system_func = _ns[self._function_to_evolve]
@@ -353,7 +382,7 @@ class Evaluator:
                         str(code_manipulation.text_to_program(program)
                             .get_function(self._function_to_evolve))
                     )
-                    dist = _euclidean_score.evaluate_system_euclidean_distance(
+                    dist = _mntd_score.evaluate_system_mntd(
                         system_func=system_func,
                         problem_name=problem_name,
                         param_distributions=final_params,
@@ -363,9 +392,10 @@ class Evaluator:
                         standardization=True,
                     )
                     if dist is not None and np.isfinite(dist):
-                        scores_per_test['euclidean_distance'] = -round(float(dist), 2)
+                        # Lower MNTD is better; we store negative as a score.
+                        scores_per_test['mntd_score'] = -round(float(dist), 2)
                 except Exception as e:
-                    print(f"[Centralized evaluation] Failed to compute Euclidean distance: {e}")
+                    print(f"[Centralized evaluation] Failed to compute MNTD distance: {e}")
         except Exception as e:
             prefix = f"Sample {sample_order}: " if sample_order is not None else ""
             print(f"{prefix}[Centralized evaluation] Failed with error: {e}")

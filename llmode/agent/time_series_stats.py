@@ -34,6 +34,44 @@ def make_result(value, nan_reason: Optional[str] = None) -> Tuple[float, Optiona
     return val, None
 
 
+def _nanmean(values: List[float]) -> float:
+    arr = np.array([v for v in values if not np.isnan(v)], dtype=float)
+    return float(np.mean(arr)) if arr.size > 0 else np.nan
+
+
+def _iqr(values: List[float]) -> float:
+    arr = np.array([v for v in values if not np.isnan(v)], dtype=float)
+    if arr.size < 4:
+        return np.nan
+    return float(np.percentile(arr, 75) - np.percentile(arr, 25))
+
+
+_CATEGORY: Dict[str, str] = {
+    "mean":               "distribution",
+    "std":                "distribution",
+    "iqr":                "distribution",
+    "skewness":           "distribution",
+    "outlier_frac":       "distribution",
+    "acf_lag1":           "autocorrelation",
+    "acf_first_zero":     "autocorrelation",
+    "dominant_freq":      "autocorrelation",
+    "spectral_entropy":   "autocorrelation",
+    "statav":             "stationarity",
+    "std_first_diff":     "stationarity",
+    "perm_entropy_m3":    "entropy",
+    "lz_complexity":      "entropy",
+    "dfa_alpha":          "scaling",
+    "spectral_slope":     "scaling",
+    "ar_coef_1":          "model_fit",
+    "exp_smooth_alpha":   "model_fit",
+    "turning_point_rate": "model_fit",
+    "spearman_trend":     "trend",
+    "mean_crossing_rate": "volatility",
+    "mean_abs_diff":      "volatility",
+    "level_corr":         "cross_variable",
+    "diff_corr":          "cross_variable",
+}
+
 
 
 def compute_pairwise_correlations(
@@ -95,9 +133,9 @@ def compute_all_stats(
 
     # Distribution
     # Distribution (compact subset)
-    add("distribution", "within_patient_mean", tsf.mean(x))
-    add("distribution", "within_patient_variance", tsf.variance(x))
-    add("distribution", "within_patient_skewness", tsf.skewness(x))
+    add("distribution", "within_trajectory_mean", tsf.mean(x))
+    add("distribution", "within_trajectory_variance", tsf.variance(x))
+    add("distribution", "within_trajectory_skewness", tsf.skewness(x))
 
     # Autocorrelation (compact subset)
     # Original min: 10
@@ -140,9 +178,9 @@ def compute_all_stats(
 
 
 _PRECISION: Dict[str, int] = {
-    "within_patient_mean": 3,
-    "within_patient_variance": 3,
-    "within_patient_skewness": 3,
+    "within_trajectory_mean": 3,
+    "within_trajectory_variance": 3,
+    "within_trajectory_skewness": 3,
     "acf_lag1": 4,
     "acf_lag3": 4,
     "acf_1e_timescale": 2,
@@ -156,6 +194,26 @@ _PRECISION: Dict[str, int] = {
     "turning_point_rate": 4,
     "spearman_trend": 4,
     "first_diff_spearman_corr": 4,
+    # MNTD-style pooled per-trajectory stats
+    "mean": 3,
+    "std": 3,
+    "iqr": 3,
+    "skewness": 3,
+    "outlier_frac": 4,
+    "acf_first_zero": 2,
+    "dominant_freq": 6,
+    "spectral_entropy": 4,
+    "statav": 4,
+    "std_first_diff": 3,
+    "lz_complexity": 4,
+    "dfa_alpha": 4,
+    "spectral_slope": 4,
+    "ar_coef_1": 4,
+    "exp_smooth_alpha": 4,
+    "mean_crossing_rate": 4,
+    "mean_abs_diff": 3,
+    "level_corr": 4,
+    "diff_corr": 4,
 }
 _DEFAULT_PRECISION = 4
 
@@ -204,27 +262,99 @@ def format_pairwise(results_dict: Dict[str, Tuple[float, Optional[str]]]) -> pd.
     return pd.DataFrame(rows)
 
 
-def build_population_trajectory(
+def collect_per_trajectory_stats(
     df: pd.DataFrame,
-    variable: str,
+    lab_vars: Optional[List[str]] = None,
+    id_col: str = "id",
     time_col: str = "t",
-    agg: str = "mean",
-    min_patients: int = 3,
-) -> pd.Series:
-    """Aggregate individual series into a population-level trajectory."""
-    grouped = df.dropna(subset=[variable]).groupby(time_col)[variable]
-    counts = grouped.count()
-    if agg == "mean":
-        traj = grouped.mean()
-    elif agg == "median":
-        traj = grouped.median()
-    elif agg == "std":
-        traj = grouped.std()
-    elif agg == "count":
-        traj = grouped.count()
-    else:
-        raise ValueError(f"Unknown aggregation: {agg}")
-    return traj[counts >= min_patients].sort_index()
+) -> Tuple[Dict[str, Dict[str, List[float]]], Dict[str, Dict[str, List[float]]]]:
+    """Compute per-trajectory statistics for all variables and variable pairs.
+
+    Returns:
+        per_var: {variable: {statistic: [values...]}}
+        cross:  {"var1__var2": {statistic: [values...]}}
+    """
+    if lab_vars is None:
+        lab_vars = [c for c in df.columns if c not in [id_col, time_col]]
+
+    per_var: Dict[str, Dict[str, List[float]]] = {var: {} for var in lab_vars}
+
+    grouped = df.groupby(id_col)
+    for _, group in grouped:
+        group = group.sort_values(time_col)
+        t_vals = group[time_col].to_numpy(dtype=float)
+        for var in lab_vars:
+            x_full = group[var].to_numpy(dtype=float)
+            mask = ~np.isnan(x_full)
+            x = x_full[mask]
+            t = t_vals[mask]
+            if x.size < 3:
+                continue
+
+            # Distribution
+            per_var[var].setdefault("mean", []).append(float(tsf.mean(x)))
+            per_var[var].setdefault("std", []).append(float(tsf.std(x)))
+            per_var[var].setdefault("iqr", []).append(float(tsf.iqr(x)))
+            per_var[var].setdefault("skewness", []).append(float(tsf.skewness(x)))
+            per_var[var].setdefault("outlier_frac", []).append(float(tsf.outlier_frac(x)))
+
+            # Autocorrelation
+            per_var[var].setdefault("acf_lag1", []).append(float(tsf.acf_lag1(x)))
+            per_var[var].setdefault("acf_first_zero", []).append(float(tsf.acf_first_zero(x)))
+            per_var[var].setdefault("dominant_freq", []).append(float(tsf.dominant_freq(x)))
+            per_var[var].setdefault("spectral_entropy", []).append(float(tsf.spectral_entropy(x)))
+
+            # Stationarity
+            per_var[var].setdefault("statav", []).append(float(tsf.statav(x)))
+            per_var[var].setdefault("std_first_diff", []).append(float(tsf.std_first_difference(x)))
+
+            # Entropy / complexity
+            per_var[var].setdefault("perm_entropy_m3", []).append(float(tsf.permutation_entropy_m3(x)))
+            per_var[var].setdefault("lz_complexity", []).append(float(tsf.lempel_ziv_complexity(x)))
+
+            # Scaling
+            per_var[var].setdefault("dfa_alpha", []).append(float(tsf.dfa_alpha(x)))
+            per_var[var].setdefault("spectral_slope", []).append(float(tsf.spectral_slope(x)))
+
+            # Model fit
+            per_var[var].setdefault("ar_coef_1", []).append(float(tsf.ar_coef_1(x)))
+            per_var[var].setdefault("exp_smooth_alpha", []).append(float(tsf.exp_smoothing_alpha(x)))
+            per_var[var].setdefault("turning_point_rate", []).append(float(tsf.turning_point_rate(x)))
+
+            # Trend
+            per_var[var].setdefault("spearman_trend", []).append(
+                float(tsf.spearman_trend(x, t))
+            )
+
+            # Volatility
+            per_var[var].setdefault("mean_crossing_rate", []).append(
+                float(tsf.mean_crossing_rate(x))
+            )
+            per_var[var].setdefault("mean_abs_diff", []).append(
+                float(tsf.mean_abs_diff(x))
+            )
+
+    cross: Dict[str, Dict[str, List[float]]] = {}
+    n_bio = len(lab_vars)
+    if n_bio >= 2:
+        for i in range(n_bio):
+            for j in range(i + 1, n_bio):
+                b1, b2 = lab_vars[i], lab_vars[j]
+                pair = f"{b1}__{b2}"
+                cross[pair] = {"level_corr": [], "diff_corr": []}
+                for _, group in grouped:
+                    group = group.sort_values(time_col)
+                    sub = group[[b1, b2]].dropna()
+                    v1 = sub[b1].to_numpy(dtype=float)
+                    v2 = sub[b2].to_numpy(dtype=float)
+                    if v1.size < 2:
+                        continue
+                    cross[pair]["level_corr"].append(float(tsf.level_corr(v1, v2)))
+                    # First-difference correlation
+                    if v1.size >= 2:
+                        cross[pair]["diff_corr"].append(float(tsf.diff_corr(v1, v2)))
+
+    return per_var, cross
 
 
 def compute_population_stats_from_df(
@@ -235,34 +365,65 @@ def compute_population_stats_from_df(
     ar_order: int = 3,
     min_patients: int = 3,
 ) -> pd.DataFrame:
-    """Compute population-level statistics from a long-format DataFrame."""
+    """Compute pooled per-trajectory statistics from a long-format DataFrame.
+
+    For each trajectory (id), we compute a rich set of time-series statistics
+    for each variable and variable pair, then pool across trajectories:
+
+      - value   = mean over trajectories of per-trajectory stat
+      - iqr_obs = IQR over trajectories of per-trajectory stat
+
+    Returns:
+        DataFrame with columns:
+          variable, category, statistic, value, iqr_obs
+    """
     lab_vars = [c for c in df.columns if c not in [id_col, time_col]]
-    all_results: List[pd.DataFrame] = []
+    per_var, cross = collect_per_trajectory_stats(
+        df=df,
+        lab_vars=lab_vars,
+        id_col=id_col,
+        time_col=time_col,
+    )
 
-    for var in lab_vars:
-        traj = build_population_trajectory(
-            df,
-            variable=var,
-            time_col=time_col,
-            agg=agg,
-            min_patients=min_patients,
-        )
-        # if len(traj) < 5:
-        #     continue
+    rows: List[Dict[str, object]] = []
 
-        x = traj.values.astype(float)
-        time_index = traj.index.values.astype(float)
-        results = compute_all_stats(x, time_index, var_name=var, ar_order=ar_order)
-        all_results.append(format_per_variable(results, var))
+    # Per-variable stats
+    for var in sorted(per_var):
+        stats_dict = per_var[var]
+        for stat, values in stats_dict.items():
+            obs_val = _nanmean(values)
+            iqr_val = _iqr(values)
+            rows.append(
+                {
+                    "variable": var,
+                    "category": _CATEGORY.get(stat, "unknown"),
+                    "statistic": stat,
+                    "value": _round_value(stat, obs_val),
+                    "iqr_obs": round(iqr_val, 6) if not np.isnan(iqr_val) else np.nan,
+                }
+            )
 
-    if len(lab_vars) >= 2:
-        pair_results = compute_pairwise_correlations(df, lab_vars, id_col=id_col, time_col=time_col)
-        all_results.append(format_pairwise(pair_results))
+    # Cross-variable stats
+    for pair in sorted(cross):
+        stats_dict = cross[pair]
+        for stat in ("level_corr", "diff_corr"):
+            values = stats_dict.get(stat, [])
+            obs_val = _nanmean(values)
+            iqr_val = _iqr(values)
+            rows.append(
+                {
+                    "variable": pair,
+                    "category": "cross_variable",
+                    "statistic": stat,
+                    "value": _round_value(stat, obs_val),
+                    "iqr_obs": round(iqr_val, 6) if not np.isnan(iqr_val) else np.nan,
+                }
+            )
 
-    if not all_results:
-        return pd.DataFrame(columns=["variable", "category", "statistic", "value"])
+    if not rows:
+        return pd.DataFrame(columns=["variable", "category", "statistic", "value", "iqr_obs"])
 
-    return pd.concat(all_results, ignore_index=True)
+    return pd.DataFrame(rows)
 
 
 def _infer_dataset_name(data_path: str, dataset_name: Optional[str]) -> str:

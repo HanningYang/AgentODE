@@ -32,7 +32,7 @@ from llmode.metrics.summary_stats import (
     compute_summary_stats,
     get_stat_names,
 )
-from llmode.metrics.euclidean_score import evaluate_system_euclidean_distance
+from llmode.metrics.mntd_score import evaluate_system_mntd
 
 
 def load_function_from_log(
@@ -183,6 +183,7 @@ def create_visualizations(
     biomarker_names: list[str],
     save_path: str = None,
     y_ranges: dict | None = None,
+    bin_width: float | None = None,
 ):
     """Create comprehensive visualizations for simulated trajectories."""
     n_biomarkers = len(biomarker_names)
@@ -209,7 +210,11 @@ def create_visualizations(
                 ax.set_ylim(*ylim)
 
     # Row 2: Aggregate temporal trends with confidence intervals
-    time_bins = np.arange(0, df['t'].max() + 24, 24)
+    t_min = float(df['t'].min())
+    t_max = float(df['t'].max())
+    if bin_width is None:
+        bin_width = (t_max - t_min) / 10.0
+    time_bins = np.arange(t_min, t_max + bin_width, bin_width)
     df['time_bin'] = pd.cut(df['t'], bins=time_bins)
 
     for i, biomarker in enumerate(biomarker_names):
@@ -238,7 +243,7 @@ def create_visualizations(
                 ax.set_ylim(*ylim)
 
     # Row 3: Distribution density heatmaps
-    time_bins_fine = np.linspace(0, df['t'].max(), 30)
+    time_bins_fine = np.linspace(t_min, t_max, 30)
     colormaps = ['YlOrRd', 'YlGn', 'YlGnBu', 'PuRd', 'BuPu', 'OrRd']
 
     for i, biomarker in enumerate(biomarker_names):
@@ -261,7 +266,7 @@ def create_visualizations(
 
             im = ax.imshow(H.T, origin='lower', aspect='auto',
                           cmap=colormaps[i % len(colormaps)],
-                          extent=[0, df['t'].max(), y_min, y_max])
+                          extent=[t_min, t_max, y_min, y_max])
             ax.set_xlabel('Time')
             ax.set_ylabel(biomarker)
             ax.set_title(f'{biomarker} Density over Time')
@@ -397,7 +402,7 @@ def main():
 
     if param_distributions is not None:
         quad_backend = "gpu" if getattr(wrapped_system_func, "_torch_backend", False) else "cpu"
-        distance = evaluate_system_euclidean_distance(
+        distance = evaluate_system_mntd(
             system_func=wrapped_system_func,
             problem_name=args.problem_name,
             param_distributions=param_distributions,
@@ -421,6 +426,14 @@ def main():
             f'trajectories_sample_{args.sample_order}.png'
         )
 
+    # Load problem-specific bin width from IC config.
+    viz_bin_width = None
+    try:
+        ic_cfg = initial_condition_utils.load_ic_config(args.problem_name)
+        viz_bin_width = initial_condition_utils.get_trajectory_bin_width(ic_cfg)
+    except FileNotFoundError:
+        pass
+
     # Optional fixed y-axis ranges for AKI visualizations.
     y_ranges = None
     if args.problem_name == 'aki' and biomarker_names == ['creatinine', 'bun', 'potassium']:
@@ -442,7 +455,7 @@ def main():
             },
         }
 
-    create_visualizations(df, biomarker_names, save_path=output_path, y_ranges=y_ranges)
+    create_visualizations(df, biomarker_names, save_path=output_path, y_ranges=y_ranges, bin_width=viz_bin_width)
 
     print("Done!")
 

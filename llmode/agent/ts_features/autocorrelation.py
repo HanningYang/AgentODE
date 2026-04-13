@@ -55,6 +55,11 @@ def acf_first_zero_crossing(x: np.ndarray, max_lag: int = 20) -> float:
     return float(sign_changes[0] + 1) if sign_changes.size > 0 else np.nan
 
 
+def acf_first_zero(x: np.ndarray, max_lag: int = 20) -> float:
+    """Alias matching trajectory-discrepancy naming for first zero crossing."""
+    return acf_first_zero_crossing(x, max_lag=max_lag)
+
+
 def acf_first_minimum_lag(x: np.ndarray, max_lag: int = 20) -> float:
     """Compute the lag of the first minimum of the autocorrelation function."""
     acf_vals = _acf_values(x, max_lag=max_lag)
@@ -93,6 +98,11 @@ def dominant_frequency(x: np.ndarray) -> float:
     if fft_vals.sum() == 0:
         return np.nan
     return float(freqs[np.argmax(fft_vals)])
+
+
+def dominant_freq(x: np.ndarray) -> float:
+    """Alias matching trajectory-discrepancy naming for dominant frequency."""
+    return dominant_frequency(x)
 
 
 def spectral_centroid(x: np.ndarray) -> float:

@@ -21,7 +21,7 @@ from openai import OpenAI as _OpenAIClient
 from llmode.agent import prompt_builder
 from llmode.agent import violation_check, tool_executor
 from llmode.agent import figures as _figures
-from llmode.agent.history import IterationHistory
+from llmode.agent.history import IterationHistory, build_iteration_index
 from llmode.core import code_manipulation
 from llmode.core import param_utils
 
@@ -53,10 +53,19 @@ class ParameterAgent:
         config: Any,
         problem_name: str,
         fn_name: str = "system",
+        log_dir: Optional[str] = None,
+        sample_order: Optional[int] = None,
     ) -> None:
         self._config = config
         self._problem_name = problem_name
         self._fn_name = fn_name
+
+        self._log_dir = log_dir
+        self._sample_order = sample_order
+        self._logger = None
+        if log_dir is not None and sample_order is not None:
+            from llmode.agent.workspace_logger import WorkspaceLogger
+            self._logger = WorkspaceLogger(problem_name, log_dir, sample_order)
 
         self._spec_path = os.path.join("specs_params", f"spec_params_{problem_name}.txt")
         self._fig_dir = os.path.join("workspace", problem_name, "figures")
@@ -118,8 +127,9 @@ class ParameterAgent:
 
         # ---- Step 1: initial parameter inference --------------------------------
         params = initial_params
+        initial_summary: Optional[str] = None
         if params is None:
-            params = self._initial_inference()
+            initial_summary, params = self._initial_inference()
 
         if params is None:
             # No valid params at all — nothing to optimize.
@@ -127,27 +137,42 @@ class ParameterAgent:
 
         # ---- Step 2: evaluate initial params ------------------------------------
         t0 = time.time()
-        score, feedback = self._score(params, sample_order=sample_order)
+        score, feedback, init_log_sl_data = self._score(params, sample_order=sample_order)
         _ = time.time() - t0
 
         best_params = params
         best_score: Optional[float] = None
         best_feedback: Optional[str] = None
         best_implaus: Optional[str] = None
+        best_implaus_dict: Optional[Dict] = None
         no_improve_count = 0
         null_score_count = 0
         extended_mode = False
+        # Track whether ANY iteration produced a finite logSL.  If this stays
+        # False for the entire run the structure always violated constraints and
+        # must not be scored — return None as the final score.
+        ever_valid_logsl = False
 
         if score is None or not np.isfinite(score):
-            best_implaus = self._implausibility_report(params)
+            best_implaus, best_implaus_dict = self._implausibility_report(params)
             if DEBUG_PRINTS:
                 _dbg(f"ParamAgent | sample={sample_order} | init logSL=None (implausible)")
         else:
+            ever_valid_logsl = True
             best_score = float(score)
             best_feedback = feedback
             history.record_param_candidate(best_score, params)
             if DEBUG_PRINTS:
                 _dbg(f"ParamAgent | sample={sample_order} | init logSL={best_score:.3f}")
+
+        # Log iter_000: initial inference + initial scoring result
+        if self._logger is not None:
+            self._logger.log_initial_inference(
+                initial_summary,
+                params,
+                log_sl_data=init_log_sl_data if best_score is not None else None,
+                violation_report=best_implaus_dict if best_score is None else None,
+            )
 
         # Check early extension based on initial L2 score.
         if not extended_mode and best_island_score is not None and extended_max_steps > max_steps:
@@ -171,31 +196,54 @@ class ParameterAgent:
                 )
                 if prompt is None:
                     break
-                new_params = self._call_llm(prompt)
+                new_summary, new_params = self._call_llm(prompt)
+                new_failure_modes: Optional[Dict] = None
+                new_tool_results: Optional[List] = None
             else:
-                new_params = self._diagnosis_and_update_step(
-                    current_best_params=best_params,
-                    history=history,
+                new_params, new_summary, new_failure_modes, new_tool_results = (
+                    self._diagnosis_and_update_step(
+                        current_best_params=best_params,
+                        history=history,
+                    )
                 )
 
             if new_params is None:
                 break
 
-            new_score, new_feedback = self._score(new_params, sample_order=sample_order)
+            new_score, new_feedback, new_log_sl_data = self._score(new_params, sample_order=sample_order)
+
+            # Compute violation report up-front whenever score is invalid
+            # so it is available for logging below.
+            new_implaus: Optional[str] = None
+            new_implaus_dict: Optional[Dict] = None
+            if new_score is None or not np.isfinite(new_score):
+                new_implaus, new_implaus_dict = self._implausibility_report(new_params)
+
+            # Workspace logging — every iteration is always recorded.
+            if self._logger is not None:
+                if new_score is not None and np.isfinite(new_score):
+                    self._logger.log_normal_iteration(
+                        new_summary,
+                        new_params,
+                        new_log_sl_data or {},
+                        new_failure_modes or {"failure_modes": [], "tool_calls": []},
+                        new_tool_results or [],
+                    )
+                else:
+                    # Log as constraint violation regardless of whether the
+                    # previous best was valid or not.
+                    self._logger.log_constraint_violation(
+                        new_summary, new_params, new_implaus_dict or {}
+                    )
 
             if new_score is None or not np.isfinite(new_score):
-                new_implaus = self._implausibility_report(new_params)
                 null_score_count += 1
                 if best_score is None:
                     best_params = new_params
                     best_implaus = new_implaus
+                    best_implaus_dict = new_implaus_dict
                     best_feedback = None
-                    # First None gets a grace period; from the second onwards
-                    # it counts as no improvement.
-                    if null_score_count > 1:
-                        no_improve_count += 1
-                else:
-                    no_improve_count += 1
+                no_improve_count += 1
                 if DEBUG_PRINTS:
                     best_str = f"{best_score:.3f}" if best_score is not None else "None"
                     _dbg(
@@ -207,6 +255,7 @@ class ParameterAgent:
                     break
             else:
                 new_score_val = float(new_score)
+                ever_valid_logsl = True
                 null_score_count = 0
                 history.record_param_candidate(new_score_val, new_params)
 
@@ -227,6 +276,7 @@ class ParameterAgent:
                     best_params = new_params
                     best_feedback = new_feedback
                     best_implaus = None
+                    best_implaus_dict = None
 
                     if not extended_mode and best_island_score is not None and extended_max_steps > max_steps:
                         extended_mode = self._maybe_extend(
@@ -247,6 +297,11 @@ class ParameterAgent:
 
             steps_done += 1
 
+        # If no iteration ever produced a finite logSL the structure violated
+        # physiological constraints throughout.  Return None so the evaluator
+        # does not assign an MNTD score to it.
+        if not ever_valid_logsl:
+            return best_params, None
         return best_params, best_score
 
     # ------------------------------------------------------------------
@@ -281,7 +336,7 @@ class ParameterAgent:
     # Initial inference
     # ------------------------------------------------------------------
 
-    def _initial_inference(self) -> Optional[Dict[str, Any]]:
+    def _initial_inference(self) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
         try:
             prompt = prompt_builder.build_param_prompt(
                 spec_path=self._spec_path,
@@ -290,7 +345,7 @@ class ParameterAgent:
             )
         except Exception as e:
             print(f"[ParamAgent] Failed to build initial inference prompt: {e}")
-            return None
+            return None, None
 
         if DEBUG_PRINTS:
             _dbg("PROMPT | INITIAL_INFERENCE", prompt)
@@ -310,7 +365,10 @@ class ParameterAgent:
         sl_feedback: Optional[str],
     ) -> Optional[str]:
         try:
-            current_params_str = json.dumps(current_params or {}, indent=2, sort_keys=True)
+            # `validate_param_distributions_format` already normalizes keys
+            # into numeric order ("0", "1", ...), so we preserve that order
+            # here instead of re-sorting lexicographically.
+            current_params_str = json.dumps(current_params or {}, indent=2)
             prompt = prompt_builder.build_param_prompt(
                 spec_path=self._spec_path,
                 prompt_type="CONSTRAINT_VIOLATION",
@@ -335,14 +393,19 @@ class ParameterAgent:
         self,
         current_best_params: Dict[str, Any],
         history: IterationHistory,
-    ) -> Optional[Dict[str, Any]]:
-        """Run DIAGNOSIS → tools → UPDATE for a logSL-valid candidate."""
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[Dict], Optional[List]]:
+        """Run DIAGNOSIS → tools → UPDATE for a logSL-valid candidate.
+
+        Returns:
+            (new_params, summary, failure_modes_data, tool_results)
+            where failure_modes_data = {"failure_modes": [...], "tool_calls": [...]}.
+        """
         # Ensure synthetic data and comparison figures are cached for current best params.
         try:
             self._ensure_best_synthetic_cache(current_best_params)
         except Exception as e:
             print(f"[ParamAgent] Failed to generate synthetic data for diagnosis: {e}")
-            return None
+            return None, None, None, None
 
         iteration_history = history.get_param_history_worst_to_best()
         iteration_history_str = json.dumps(iteration_history, indent=2, ensure_ascii=False)
@@ -358,7 +421,7 @@ class ParameterAgent:
             )
         except Exception as e:
             print(f"[ParamAgent] Failed to build DIAGNOSIS prompt: {e}")
-            return None
+            return None, None, None, None
 
         if DEBUG_PRINTS:
             _dbg("PROMPT | DIAGNOSIS", diagnosis_prompt)
@@ -372,49 +435,101 @@ class ParameterAgent:
             print(f"[ParamAgent] Failed to load tool schemas: {e}")
             tool_schemas = None
 
-        raw_diag = self._request_llm(
-            diagnosis_prompt,
-            images=self._cached_figures_bytes or None,
-            tools=tool_schemas or None,
-        )
-        if not raw_diag:
-            return None
+        # 2) Multi-turn DIAGNOSIS: the LLM may call tools across several turns.
+        # Each turn: get response → execute tool calls → return results → repeat.
+        # All tool results and failure modes are accumulated across turns.
+        _MAX_DIAG_TURNS = 5
+        current_diag_prompt = diagnosis_prompt
+        all_tool_results: List[Dict[str, Any]] = []
+        all_failure_modes: List[Dict[str, Any]] = []
+        all_tool_calls_logged: List[Dict[str, Any]] = []
+        raw_diag: Optional[str] = None
 
-        # if DEBUG_PRINTS:
-            # print("[ParamAgent] Raw DIAGNOSIS LLM response:\n", raw_diag)
+        for _diag_turn in range(_MAX_DIAG_TURNS):
+            raw_diag = self._request_llm(
+                current_diag_prompt,
+                images=self._cached_figures_bytes or None if _diag_turn == 0 else None,
+                tools=tool_schemas or None,
+            )
+            if not raw_diag:
+                return None, None, None, None
 
-        try:
-            diag_json = prompt_builder.extract_json_from_llm_output(raw_diag)
-        except Exception as e:
-            print(f"[ParamAgent] Failed to parse DIAGNOSIS JSON: {e}")
-            return None
-
-        failure_modes = prompt_builder.extract_failure_modes(diag_json)
-        tool_calls = tool_executor.extract_tool_calls(diag_json)
-
-        failure_modes_str = json.dumps(failure_modes, indent=2, ensure_ascii=False)
-
-        # 2) Execute requested tools and build stat table.
-        stat_table_str = ""
-        if tool_calls and self._cached_synthetic is not None and self._cached_time_grid is not None:
             try:
-                # Use synthetic as both observed and synthetic here; observed values
-                # in the comparison table are taken from ts_stats.json.
-                tool_results = tool_executor.execute_tool_calls(
-                    tool_calls=tool_calls,
+                diag_json = prompt_builder.extract_json_from_llm_output(raw_diag)
+            except Exception as e:
+                print(f"[ParamAgent] Failed to parse DIAGNOSIS JSON (turn {_diag_turn}): {e}")
+                break
+
+            # Collect failure modes and tool calls from this turn.
+            turn_failure_modes = prompt_builder.extract_failure_modes(diag_json)
+            all_failure_modes.extend(turn_failure_modes)
+
+            turn_tool_calls = tool_executor.extract_tool_calls(diag_json)
+            all_tool_calls_logged.extend(turn_tool_calls)
+
+            if not turn_tool_calls or self._cached_synthetic is None or self._cached_time_grid is None:
+                break  # No tool calls — DIAGNOSIS is complete.
+
+            # Execute tools and feed results back to the LLM for the next turn.
+            try:
+                # Observed values in the comparison table come from ts_stats.json;
+                # synthetic values are computed from the current trajectories.
+                turn_results = tool_executor.execute_tool_calls(
+                    tool_calls=turn_tool_calls,
                     observed=self._cached_synthetic,
                     synthetic=self._cached_synthetic,
                     time_index=self._cached_time_grid,
                     config=self._cached_ic_config or {},
                 )
+                all_tool_results.extend(turn_results)
+
+                # Format as a stat comparison table (observed from ts_stats.json vs
+                # synthetic) so the LLM can read the results clearly.
+                try:
+                    turn_table = tool_executor.format_stat_table(
+                        problem_name=self._problem_name,
+                        tool_results=turn_results,
+                    )
+                    results_text = f"[Stat comparison (observed vs synthetic) — turn {_diag_turn + 1}]\n{turn_table}"
+                except Exception:
+                    results_text = json.dumps(turn_results, indent=2, ensure_ascii=False)
+
+                current_diag_prompt = current_diag_prompt + f"\n\n[Tool results]\n{results_text}"
+
+                if DEBUG_PRINTS:
+                    _dbg(
+                        f"DIAGNOSIS turn={_diag_turn} | tools={[tc.get('tool') for tc in turn_tool_calls]}",
+                        results_text,
+                    )
+
+            except Exception as e:
+                print(f"[ParamAgent] Failed to execute tools (DIAGNOSIS turn {_diag_turn}): {e}")
+                break
+
+        failure_modes_data = {"failure_modes": all_failure_modes, "tool_calls": all_tool_calls_logged}
+        failure_modes_str = json.dumps(all_failure_modes, indent=2, ensure_ascii=False)
+
+        # Build stat table from all accumulated tool results across all turns.
+        stat_table_str = ""
+        tool_results: List[Dict[str, Any]] = all_tool_results
+        if tool_results:
+            try:
                 stat_table_str = tool_executor.format_stat_table(
                     problem_name=self._problem_name,
                     tool_results=tool_results,
                 )
             except Exception as e:
-                print(f"[ParamAgent] Failed to execute tools or format stat table: {e}")
+                print(f"[ParamAgent] Failed to format final stat table: {e}")
 
         # 3) Build UPDATE prompt and request new parameter distributions.
+        iteration_index_str = ""
+        if self._log_dir is not None and self._sample_order is not None:
+            iteration_index_str = build_iteration_index(
+                problem_name=self._problem_name,
+                log_path=self._log_dir,
+                sample_number=self._sample_order,
+            )
+
         try:
             update_prompt = prompt_builder.build_param_prompt(
                 spec_path=self._spec_path,
@@ -424,16 +539,59 @@ class ParameterAgent:
                     "failure_modes": failure_modes_str,
                     "stat_table": stat_table_str,
                     "iteration_history": iteration_history_str,
+                    "iteration_index": iteration_index_str,
                 },
             )
         except Exception as e:
             print(f"[ParamAgent] Failed to build UPDATE prompt: {e}")
-            return None
+            return None, None, None, None
 
         if DEBUG_PRINTS:
             _dbg("PROMPT | UPDATE", update_prompt)
 
-        return self._call_llm(update_prompt)
+        filesystem_schemas = None
+        sample_dir: Optional[str] = None
+        if self._log_dir is not None and self._sample_order is not None:
+            sample_dir = os.path.join(
+                "workspace", self._problem_name,
+                self._log_dir, f"sample_{self._sample_order}",
+            )
+            try:
+                filesystem_schemas = prompt_builder.load_filesystem_schemas(sample_dir)
+            except Exception as e:
+                print(f"[ParamAgent] Failed to load filesystem schemas: {e}")
+
+        current_prompt = update_prompt
+        raw_update = None
+        _MAX_FS_TURNS = 5
+        for _turn in range(_MAX_FS_TURNS):
+            raw_update = self._request_llm(current_prompt, tools=filesystem_schemas)
+            if not raw_update:
+                return None, None, None, None
+
+            # Check whether the LLM called any filesystem tools.
+            try:
+                fs_tool_calls = tool_executor.extract_tool_calls(
+                    prompt_builder.extract_json_from_llm_output(raw_update)
+                )
+            except Exception:
+                fs_tool_calls = []
+
+            if not fs_tool_calls or not sample_dir:
+                break  # No tool calls — response is the final params reply.
+
+            try:
+                fs_results = tool_executor.execute_filesystem_tool_calls(fs_tool_calls, sample_dir)
+                fs_results_str = json.dumps(fs_results, indent=2, ensure_ascii=False)
+                current_prompt = current_prompt + f"\n\n[Tool results]\n{fs_results_str}"
+                # if DEBUG_PRINTS:
+                    # _dbg(f"UPDATE TOOL RESULTS | turn={_turn}", fs_results_str)
+            except Exception as e:
+                print(f"[ParamAgent] Failed to execute filesystem tool calls: {e}")
+                break
+
+        summary, new_params = self._parse_params_response(raw_update)
+        return new_params, summary, failure_modes_data, tool_results
 
     # ------------------------------------------------------------------
     # Scoring
@@ -443,9 +601,13 @@ class ParameterAgent:
         self,
         params: Dict[str, Any],
         sample_order: Optional[int] = None,
-    ) -> Tuple[Optional[float], Optional[str]]:
-        from llmode.metrics import synthetic_likelihood
-        score, feedback = synthetic_likelihood.evaluate_system_logsl_with_feedback(
+    ) -> Tuple[Optional[float], Optional[str], Optional[Dict]]:
+        """Return (score, feedback, log_sl_data)."""
+        from llmode.metrics.synthetic_likelihood import (
+            _evaluate_system_logsl_core,
+            build_log_sl_json_data,
+        )
+        log_likelihood, details, s_obs, stat_names, biomarker_names = _evaluate_system_logsl_core(
             system_func=self._system_func,
             problem_name=self._problem_name,
             param_distributions=params,
@@ -453,9 +615,17 @@ class ParameterAgent:
             sample_order=sample_order,
             backend="gpu" if self._use_gpu else "cpu",
         )
-        return score, feedback
+        if log_likelihood is None or details is None:
+            return None, None, None
+        log_sl_data = build_log_sl_json_data(
+            log_likelihood, details, s_obs, stat_names, biomarker_names
+        )
+        return float(log_likelihood), None, log_sl_data
 
-    def _implausibility_report(self, params: Dict[str, Any]) -> Optional[str]:
+    def _implausibility_report(
+        self, params: Dict[str, Any]
+    ) -> Tuple[Optional[str], Optional[Dict]]:
+        """Return (text_report, report_dict) for implausible trajectories."""
         try:
             from llmode.ode import initial_condition_utils, ode_simulator
 
@@ -468,14 +638,20 @@ class ParameterAgent:
                 sample_size=None,
                 random_seed=ic_config.get("random_seed", None),
             )
-            return violation_check.get_unplausible_trajectory_report(
+            text_report = violation_check.get_unplausible_trajectory_report(
                 trajectories=trajectories,
                 config=ic_config,
                 check_nans=True,
             )
+            report_dict = violation_check.compute_violation_report_dict(
+                trajectories=trajectories,
+                config=ic_config,
+                check_nans=True,
+            )
+            return text_report, report_dict
         except Exception as e:
             print(f"[ParamAgent] Failed to compute implausibility report: {e}")
-            return None
+            return None, None
 
     # ------------------------------------------------------------------
     # Extension logic
@@ -491,9 +667,9 @@ class ParameterAgent:
     ) -> bool:
         """Return True if this candidate is competitive enough to extend the budget."""
         try:
-            from llmode.metrics import euclidean_score as _euclid
+            from llmode.metrics import mntd_score as _mntd
 
-            dist = _euclid.evaluate_system_euclidean_distance(
+            dist = _mntd.evaluate_system_mntd(
                 system_func=self._system_func,
                 problem_name=self._problem_name,
                 param_distributions=params,
@@ -503,10 +679,13 @@ class ParameterAgent:
                 standardization=True,
             )
             if dist is not None and np.isfinite(dist):
-                l2 = -float(dist)
-                if l2 >= best_island_score:
+                score = -float(dist)
+                if score >= best_island_score:
                     if DEBUG_PRINTS:
-                        _dbg(f"ParamAgent | sample={sample_order} | extending to {extended_max} steps (L2={dist:.2f})")
+                        _dbg(
+                            f"ParamAgent | sample={sample_order} | "
+                            f"extending to {extended_max} steps (MNTD={dist:.2f})"
+                        )
                     return True
         except Exception as e:
             if DEBUG_PRINTS:
@@ -587,25 +766,40 @@ class ParameterAgent:
 
         return llm_output
 
+    def _parse_params_response(
+        self,
+        llm_output: str,
+    ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+        """Parse a raw LLM response string into (summary, params).
+
+        Expects ``{"summary": "...", "params": {...}}`` or a bare params dict.
+        """
+        try:
+            raw = prompt_builder.extract_json_from_llm_output(llm_output)
+            summary = raw.get("summary", "") if isinstance(raw, dict) else ""
+            params_raw = raw.get("params", raw) if isinstance(raw, dict) and "params" in raw else raw
+            params = param_utils.validate_param_distributions_format(params_raw)
+            return summary, params
+        except Exception as e:
+            print(f"[ParamAgent] Failed to parse parameter JSON: {e}")
+            return None, None
+
     def _call_llm(
         self,
         prompt: str,
         images: Optional[Dict[str, bytes]] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """Send prompt (and optional images) to the parameter LLM and return parsed distributions."""
-        llm_output = self._request_llm(prompt, images=images)
-        if not llm_output:
-            return None
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+        """Send prompt (and optional images/tools) to the parameter LLM.
 
-        try:
-            raw = prompt_builder.extract_json_from_llm_output(llm_output)
-            # Support new output contract: {"summary": "...", "params": {...}}
-            if "params" in raw:
-                raw = raw["params"]
-            return param_utils.validate_param_distributions_format(raw)
-        except Exception as e:
-            print(f"[ParamAgent] Failed to parse parameter JSON: {e}")
-            return None
+        Returns:
+            (summary, params) where summary is the LLM's free-text reasoning
+            and params is the validated parameter distributions dict.
+        """
+        llm_output = self._request_llm(prompt, images=images, tools=tools)
+        if not llm_output:
+            return None, None
+        return self._parse_params_response(llm_output)
 
     @staticmethod
     def _api_tool_calls_to_json(message_dict: Dict[str, Any]) -> str:
@@ -649,7 +843,8 @@ class ParameterAgent:
     ) -> Optional[str]:
         provider = getattr(self._config, "api_provider", "openai")
         if str(provider).lower() == "deepseek":
-            host, path = "api.deepseek.com", "/chat/completions"
+            # DeepSeek's OpenAI-compatible endpoint lives under /v1.
+            host, path = "api.deepseek.com", "/v1/chat/completions"
             api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("API_KEY")
         else:
             host, path = "api.openai.com", "/v1/chat/completions"
@@ -663,20 +858,26 @@ class ParameterAgent:
             "Content-Type": "application/json",
         }
 
-        # Build multimodal content if images are provided; otherwise plain text.
-        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-        if images:
-            import base64
+        # Build content for the chat API.
+        # For most providers we use OpenAI-style multimodal blocks; DeepSeek's
+        # current API, however, rejects "image_url" variants and only accepts
+        # plain text, so we drop images in that case.
+        if str(provider).lower() == "deepseek":
+            content: Any = prompt  # send plain text only
+        else:
+            content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+            if images:
+                import base64
 
-            for _name, data in images.items():
-                b64 = base64.b64encode(data).decode("ascii")
-                url = f"data:image/png;base64,{b64}"
-                content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": url},
-                    }
-                )
+                for _name, data in images.items():
+                    b64 = base64.b64encode(data).decode("ascii")
+                    url = f"data:image/png;base64,{b64}"
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": url},
+                        }
+                    )
 
         if DEBUG_PRINTS:
             num_images = sum(1 for part in content if part.get("type") == "image_url")
@@ -694,7 +895,17 @@ class ParameterAgent:
         conn = http.client.HTTPSConnection(host)
         conn.request("POST", path, payload, headers)
         res = conn.getresponse()
-        data = json.loads(res.read().decode("utf-8"))
+        raw = res.read().decode("utf-8")
+
+        try:
+            data = json.loads(raw)
+        except Exception:
+            raise RuntimeError(f"{provider} API returned non-JSON response: {raw[:200]!r}")
+
+        if "choices" not in data:
+            # Surface provider error payload instead of a cryptic KeyError.
+            raise RuntimeError(f"{provider} API error response: {data}")
+
         message = data["choices"][0]["message"]
         if tools and message.get("tool_calls"):
             return self._api_tool_calls_to_json(message)
@@ -826,9 +1037,12 @@ class ParameterAgent:
         synth_df = pd.DataFrame(records)
 
         # Generate comparison figures (PNG bytes) from observed vs synthetic.
+        # Use the configured trajectory_bin_width for time binning so that
+        # comparison plots respect CLI / config overrides.
         figures_bytes = _figures.generate_observed_vs_synthetic_figures(
             problem_name=self._problem_name,
             synthetic_df=synth_df,
+            bin_width=getattr(self._config, "trajectory_bin_width", None),
         )
 
         # Simple textual description for the prompt placeholder.

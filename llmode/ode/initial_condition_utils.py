@@ -4,7 +4,7 @@ import json
 import numpy as np
 from typing import Dict, Tuple, Optional
 import os
-from scipy.stats import multivariate_normal
+from scipy.stats import multivariate_normal, norm
 
 
 def load_ic_config(problem_name: str, config_dir: str = 'initial_conditions') -> dict:
@@ -94,7 +94,7 @@ def approximate_log_space_correlation(
 
     Args:
         linear_corr: Correlation matrix in linear space
-        biomarker_types: List of distribution types ('lognormal' or 'normal')
+        biomarker_types: List of distribution types ('lognormal', 'normal', or 'uniform')
 
     Returns:
         Approximate correlation matrix in transformed space
@@ -189,6 +189,13 @@ def generate_initial_conditions(
             elif dist == 'normal':
                 mean_vector.append(params['mean'])
                 std_vector.append(params['std'])
+            elif dist == 'uniform':
+                # For uniform variables, we model a standard normal in the
+                # transformed space and later map it to a uniform distribution
+                # via the normal CDF. Correlations are handled in the Gaussian
+                # copula space.
+                mean_vector.append(0.0)
+                std_vector.append(1.0)
             else:
                 raise ValueError(f"Unsupported distribution type: {dist}")
 
@@ -224,10 +231,19 @@ def generate_initial_conditions(
         for j, name in enumerate(biomarker_names):
             params = config['biomarkers'][name]
             dist = biomarker_types[j]
+            z = samples_transformed[:, j]
+
             if dist == 'lognormal':
-                samples = np.exp(samples_transformed[:, j])
-            else:
-                samples = samples_transformed[:, j]
+                samples = np.exp(z)
+            elif dist == 'uniform':
+                # Map standard normal to U(0, 1) via CDF, then scale to
+                # [clip_min, clip_max].
+                u = norm.cdf(z)
+                low = params['clip_min']
+                high = params['clip_max']
+                samples = low + u * (high - low)
+            else:  # 'normal'
+                samples = z
 
             if clip:
                 samples = np.clip(samples, params['clip_min'], params['clip_max'])
@@ -252,6 +268,11 @@ def generate_initial_conditions(
             mean = params['mean']
             std = params['std']
             samples = np.random.normal(loc=mean, scale=std, size=sample_size)
+        elif distribution == 'uniform':
+            # Sample from a uniform distribution over the specified range.
+            low = params.get('low', params['clip_min'])
+            high = params.get('high', params['clip_max'])
+            samples = np.random.uniform(low=low, high=high, size=sample_size)
         else:
             raise ValueError(f"Unsupported distribution type: {distribution}")
 
@@ -280,6 +301,11 @@ def get_observed_biomarker_order(config: dict) -> list:
         for name, params in config['biomarkers'].items()
         if params.get('observed', True)
     ]
+
+
+def get_trajectory_bin_width(config: dict, fallback: float = 14.0) -> float:
+    """Return the trajectory bin width from config, or fallback if not set."""
+    return float(config.get("simulation_params", {}).get("trajectory_bin_width", fallback))
 
 
 def get_time_grid(config: dict, n_points: Optional[int] = None) -> np.ndarray:
@@ -321,7 +347,9 @@ def print_config_summary(config: dict):
         print(f"\n  {params['display_name']} ({name}):")
         print(f"    Unit: {params['unit']}")
         print(f"    Distribution: {params['distribution']}")
-        print(f"    Mean: {params['mean']}, Median: {params.get('median', 'N/A')}, Std: {params['std']}")
+        mean_str = params.get('mean', 'N/A')
+        std_str = params.get('std', 'N/A')
+        print(f"    Mean: {mean_str}, Median: {params.get('median', 'N/A')}, Std: {std_str}")
         print(f"    Clip range: [{params['clip_min']}, {params['clip_max']}]")
         print(f"    Observed in data: {observed}")
 
@@ -352,7 +380,8 @@ def validate_config(config: dict) -> Tuple[bool, list]:
     # Check biomarkers
     if 'biomarkers' in config:
         for name, params in config['biomarkers'].items():
-            required_params = ['distribution', 'mean', 'std', 'clip_min', 'clip_max']
+            # Fields required for all biomarkers
+            required_params = ['distribution', 'clip_min', 'clip_max']
             for param in required_params:
                 if param not in params:
                     errors.append(f"Biomarker '{name}' missing required parameter: {param}")
@@ -360,9 +389,19 @@ def validate_config(config: dict) -> Tuple[bool, list]:
             # Optional observed flag should be boolean if present.
             if 'observed' in params and not isinstance(params['observed'], bool):
                 errors.append(f"Biomarker '{name}' has non-boolean 'observed' flag")
+            # Optional negative flag should be boolean if present.
+            if 'negative' in params and not isinstance(params['negative'], bool):
+                errors.append(f"Biomarker '{name}' has non-boolean 'negative' flag")
 
             # Check distribution-specific requirements
-            if params.get('distribution') == 'lognormal' and 'median' not in params:
+            dist = params.get('distribution')
+            if dist in ('normal', 'lognormal'):
+                for param in ['mean', 'std']:
+                    if param not in params:
+                        errors.append(
+                            f"Biomarker '{name}' with distribution '{dist}' missing required parameter: {param}"
+                        )
+            if dist == 'lognormal' and 'median' not in params:
                 errors.append(f"Biomarker '{name}' uses lognormal but missing 'median'")
 
     # Check simulation params

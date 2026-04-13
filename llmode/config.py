@@ -36,7 +36,7 @@ class ExperienceBufferConfig:
     functions_per_prompt: int = 2
     num_islands: int = 10 
     reset_period: int = 4 * 60 * 60
-    cluster_sampling_temperature_init: float = 0.3 # 0.8 # 0.1
+    cluster_sampling_temperature_init: float = 0.1 # 0.8 # 0.1
     cluster_sampling_temperature_period: int = 30_000
 
 
@@ -118,10 +118,10 @@ class Config:
     api_provider: str = "openai"
 
     # --- Parameter optimisation ---
-    param_optim_steps: int = 10
-    param_optim_patience: int = 3
+    param_optim_steps: int = 30
+    param_optim_patience: int = 10
     param_optim_rel_improvement: float = 0.1
-    param_optim_extended_steps: int = 20
+    param_optim_extended_steps: int = 40
 
     trajectory_bin_width: float = 14.0
 

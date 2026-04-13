@@ -17,14 +17,23 @@ import scipy.stats
 from matplotlib.lines import Line2D
 
 from llmode.config import Config
+from llmode.ode import initial_condition_utils
 
 _DEFAULT_CONFIG = Config()
 
 
-def _resolve_bin_width(bin_width: Optional[float]) -> float:
-    """Return bin_width, falling back to Config.trajectory_bin_width."""
+def _resolve_bin_width(bin_width: Optional[float], problem_name: Optional[str] = None) -> float:
+    """Return bin_width, loading from IC config when not explicitly provided."""
     if bin_width is not None:
         return bin_width
+    if problem_name is not None:
+        try:
+            config = initial_condition_utils.load_ic_config(problem_name)
+            return initial_condition_utils.get_trajectory_bin_width(
+                config, fallback=_DEFAULT_CONFIG.trajectory_bin_width
+            )
+        except FileNotFoundError:
+            pass
     return _DEFAULT_CONFIG.trajectory_bin_width
 
 
@@ -47,8 +56,9 @@ def _auto_detect_vars(df: pd.DataFrame) -> List[str]:
 
 def _bin_trajectories(df: pd.DataFrame, bin_width: float) -> pd.DataFrame:
     """Assign each row to a fixed-width time bin."""
-    t_max = max(float(df["t"].max()), float(bin_width))
-    bins = np.arange(0.0, t_max + bin_width, bin_width)
+    t_min = float(df["t"].min())
+    t_max = max(float(df["t"].max()), t_min + bin_width)
+    bins = np.arange(t_min, t_max + bin_width, bin_width)
     out = df.copy()
     out["t_bin"] = pd.cut(out["t"], bins=bins)
     return out
@@ -241,7 +251,7 @@ def generate_observed_vs_synthetic_figures(
             "mean_trajectory", "umap" (optional), "faceted_by_baseline",
             "diff_corr_heatmap".
     """
-    bin_width = _resolve_bin_width(bin_width)
+    bin_width = _resolve_bin_width(bin_width, problem_name)
 
     # Load observed data
     obs_path = os.path.join("data", problem_name, f"{problem_name}.csv")
@@ -529,7 +539,7 @@ def plot_distribution_boxplot_comparison(
     """
     import matplotlib.patches as mpatches
 
-    bin_width = _resolve_bin_width(bin_width)
+    bin_width = _resolve_bin_width(bin_width, problem_name)
 
     # ── Load & normalise ──────────────────────────────────────────────────────
     obs_path = os.path.join("data", problem_name, f"{problem_name}.csv")

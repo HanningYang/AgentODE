@@ -59,6 +59,9 @@ def check_trajectory_normal_range_validity(
     }
 
     biomarker_names = initial_condition_utils.get_biomarker_order(config)
+    # Optional global flag: if config["negative"] is True, allow negatives
+    # by default unless overridden at the biomarker level.
+    global_allow_negative = bool(config.get("negative", False))
 
     for i in range(n_samples):
         trajectory = trajectories[i]
@@ -73,7 +76,20 @@ def check_trajectory_normal_range_validity(
             sample_invalid = True
             issue_counts["has_inf"] += 1
 
-        if np.any(trajectory < 0):
+        # Check for disallowed negative values per biomarker.
+        has_disallowed_negative = False
+        for j, name in enumerate(biomarker_names):
+            allow_negative = config["biomarkers"][name].get(
+                "negative", global_allow_negative
+            )
+            if allow_negative:
+                continue
+            vals = trajectory[:, j]
+            if np.any(vals < 0):
+                has_disallowed_negative = True
+                break
+
+        if has_disallowed_negative:
             sample_invalid = True
             issue_counts["negative_values"] += 1
 
@@ -282,10 +298,27 @@ def simulate_from_config(
     ic_array, ic_dict = initial_condition_utils.generate_initial_conditions(
         config,
         sample_size=sample_size,
-        random_seed=random_seed
+        random_seed=random_seed,
     )
     time_grid = initial_condition_utils.get_time_grid(config)
-    trajectories = simulate_ode_system(system_func, ic_array, time_grid, params)
+    # Respect torch vs NumPy backend in the same way as `simulate_valid_from_config`.
+    use_torch_backend = bool(getattr(system_func, "_torch_backend", False))
+    if use_torch_backend:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        traj_t = simulate_ode_system_torch(
+            system_func=system_func,
+            initial_conditions=ic_array,
+            time_grid=time_grid,
+            params=params,
+            device=device,
+            dtype=torch.float32,
+            method="rk4",
+        )
+        trajectories = traj_t.detach().cpu().numpy()
+    else:
+        trajectories = simulate_ode_system(
+            system_func, ic_array, time_grid, params
+        )
     return trajectories, time_grid, ic_dict
 
 

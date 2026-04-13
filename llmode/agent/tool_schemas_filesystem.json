@@ -1,0 +1,24 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "read_iteration",
+      "description": "Read a specific JSON file from a past iteration record. 'params' contains iter_type, summary, and parameter distributions; 'log_sl' contains log synthetic likelihood and per-biomarker components; 'violation_report' contains validity summary and per-issue, per-biomarker counts.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "iteration": {
+            "type": "integer",
+            "description": "The iteration number to read. Check the iteration index in the prompt for available iterations and their types."
+          },
+          "file": {
+            "type": "string",
+            "description": "Logical file key: 'params' for iter_type/summary/params, 'log_sl' for synthetic likelihood diagnostics, 'violation_report' for validity summary and issue counts.",
+            "enum": ["params", "log_sl", "violation_report"]
+          }
+        },
+        "required": ["iteration", "file"]
+      }
+    }
+  }
+]

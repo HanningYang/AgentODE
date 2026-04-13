@@ -27,6 +27,15 @@ def std(x: np.ndarray) -> float:
     return float(np.std(x, ddof=1)) if x.size > 1 else np.nan
 
 
+def iqr(x: np.ndarray) -> float:
+    """Interquartile range (75th - 25th percentile) of the series."""
+    x = np.asarray(x, dtype=float)
+    x = x[~np.isnan(x)]
+    if x.size == 0:
+        return np.nan
+    return float(np.percentile(x, 75) - np.percentile(x, 25))
+
+
 def skewness(x: np.ndarray) -> float:
     """Compute Fisher-Pearson skewness of a time-ordered series."""
     x = np.asarray(x, dtype=float)
@@ -74,6 +83,11 @@ def outlier_fraction(x: np.ndarray, threshold: float = 2.0) -> float:
         return 0.0
     mask = np.abs(x - mu) > threshold * sigma
     return float(np.mean(mask))
+
+
+def outlier_frac(x: np.ndarray, threshold: float = 2.0) -> float:
+    """Alias used in trajectory-discrepancy stats for outlier_fraction."""
+    return outlier_fraction(x, threshold=threshold)
 
 
 def distribution_entropy(x: np.ndarray, bins: Optional[int] = None) -> float:

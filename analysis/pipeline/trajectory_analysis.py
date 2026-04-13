@@ -204,8 +204,7 @@ def main() -> None:
     )
     os.makedirs(out_dir, exist_ok=True)
 
-    data_path = args.data or os.path.join("data", args.problem_name, f"{args.problem_name}.csv")
-    df = pd.read_csv(data_path)
+    df = pd.read_csv(args.data)
     df.columns = df.columns.str.strip().str.lower()
 
     id_col = args.id_col.strip().lower()

@@ -26,7 +26,7 @@ def load_tool_schemas(problem_name: str) -> list[dict[str, Any]]:
     placeholder = "{variable_names}"
     joined = ", ".join(variable_names)
 
-    schemas_path = os.path.join(os.path.dirname(__file__), "tool_schemas.json")
+    schemas_path = os.path.join(os.path.dirname(__file__), "tool_schemas_stat.json")
     with open(schemas_path, "r", encoding="utf-8") as f:
         schemas: list[dict[str, Any]] = json.load(f)
 
@@ -40,6 +40,25 @@ def load_tool_schemas(problem_name: str) -> list[dict[str, Any]]:
         return obj
 
     return _replace_placeholders(schemas)
+
+
+def load_filesystem_schemas(experiment_dir: str) -> list[dict[str, Any]]:
+    """Load filesystem tool schemas with ``{experiment_dir}`` filled in.
+
+    Args:
+        experiment_dir: Path to the sample directory
+            (e.g. ``workspace/aki/logs/run1/sample_0``), injected into any
+            ``{experiment_dir}`` placeholders in the schema descriptions.
+
+    Returns:
+        List of tool schema dicts ready to pass to the LLM.
+    """
+    schemas_path = os.path.join(os.path.dirname(__file__), "tool_schemas_filesystem.json")
+    with open(schemas_path, "r", encoding="utf-8") as f:
+        schemas_str = f.read()
+
+    schemas_str = schemas_str.replace("{experiment_dir}", experiment_dir)
+    return json.loads(schemas_str)
 
 
 def extract_json_from_llm_output(llm_output: str) -> dict:
@@ -160,6 +179,7 @@ def build_figures_block_from_dir(fig_dir: str) -> str:
 __all__ = [
     "get_variable_names",
     "load_tool_schemas",
+    "load_filesystem_schemas",
     "extract_json_from_llm_output",
     "extract_failure_modes",
     "build_param_prompt",

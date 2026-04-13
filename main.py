@@ -32,6 +32,12 @@ parser.add_argument('--spec_path', type=str)
 parser.add_argument('--log_path', type=str, default="./logs/oscillator1")
 parser.add_argument('--problem_name', type=str, default="oscillator1")
 parser.add_argument('--run_id', type=int, default=1)
+parser.add_argument(
+    '--trajectory_bin_width',
+    type=float,
+    default=None,
+    help="Override default Config.trajectory_bin_width (time-bin width for trajectory comparison figures).",
+)
 args = parser.parse_args()
 
 
@@ -51,6 +57,8 @@ if __name__ == '__main__':
         config_kwargs["structure_model"] = args.structure_model
     if args.param_model is not None:
         config_kwargs["param_model"] = args.param_model
+    if args.trajectory_bin_width is not None:
+        config_kwargs["trajectory_bin_width"] = args.trajectory_bin_width
     config = config.Config(**config_kwargs)
     global_max_sample_num = 10000
 
