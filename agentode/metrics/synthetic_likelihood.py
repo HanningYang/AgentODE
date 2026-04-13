@@ -22,7 +22,7 @@ import pandas as pd
 from joblib import Parallel, delayed
 from scipy.stats import spearmanr
 
-from llmode.metrics.summary_stats import (
+from agentode.metrics.summary_stats import (
     polynomial_quantile_stats_deg01,
     compute_standardization_params,
     standardize,
@@ -594,8 +594,8 @@ def _evaluate_system_logsl_core(
     n_jobs: int = 1,
 ) -> Tuple[float | None, Dict[str, np.ndarray] | None, np.ndarray | None, List[str] | None, List[str] | None]:
     """Core synthetic-likelihood evaluation returning diagnostics alongside score."""
-    from llmode.ode import initial_condition_utils, ode_simulator
-    from llmode.core import param_utils
+    from agentode.ode import initial_condition_utils, ode_simulator
+    from agentode.core import param_utils
 
     # Load configuration and observed data (cached per problem).
     obs = get_observed_summary(problem_name)

@@ -1,4 +1,4 @@
-name: llmode
+name: agentode
 channels:
   - conda-forge
   - defaults

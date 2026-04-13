@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import numpy as np
 
-from llmode.ode import initial_condition_utils
+from agentode.ode import initial_condition_utils
 from . import ts_features as tsf
 
 

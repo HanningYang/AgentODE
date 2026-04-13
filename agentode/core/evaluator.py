@@ -22,19 +22,19 @@ import time
 from collections.abc import Sequence
 import copy
 from typing import Any, Type
-from llmode.core import profile
+from agentode.core import profile
 import multiprocessing
 
 import re
 
 import numpy as np
 
-from llmode.core import code_manipulation
-from llmode.core import buffer
-from llmode.core import evaluator_accelerate
+from agentode.core import code_manipulation
+from agentode.core import buffer
+from agentode.core import evaluator_accelerate
 
 
-DEBUG_PRINTS = os.environ.get("LLMODE_DEBUG_PRINTS", "0") == "1"
+DEBUG_PRINTS = os.environ.get("AGENTODE_DEBUG_PRINTS", "0") == "1"
 
 class _FunctionLineVisitor(ast.NodeVisitor):
 
@@ -321,8 +321,8 @@ class Evaluator:
         # Centralized evaluation: parameter optimization via ParameterAgent,
         # followed by MNTD scoring in summary-stat space.
         try:
-            from llmode.agent.param_agent import ParameterAgent
-            from llmode.metrics import mntd_score as _mntd_score
+            from agentode.agent.param_agent import ParameterAgent
+            from agentode.metrics import mntd_score as _mntd_score
 
             problem_name = kwargs.get('problem_name') or self._problem_name
             if problem_name is None:

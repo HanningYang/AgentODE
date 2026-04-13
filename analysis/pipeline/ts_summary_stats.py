@@ -7,7 +7,7 @@ Usage:
 import argparse
 import os
 
-from llmode.agent.time_series_stats import save_observed_stats
+from agentode.agent.time_series_stats import save_observed_stats
 
 
 def main() -> None:

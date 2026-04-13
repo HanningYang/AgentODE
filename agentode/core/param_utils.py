@@ -7,10 +7,10 @@ from typing import Dict, Any, Optional, Dict as TypingDict
 
 import numpy as np
 
-from llmode.core import code_manipulation
+from agentode.core import code_manipulation
 
 
-DEBUG_PRINTS = os.environ.get("LLMODE_DEBUG_PRINTS", "0") == "1"
+DEBUG_PRINTS = os.environ.get("AGENTODE_DEBUG_PRINTS", "0") == "1"
 
 DEFAULT_SYSTEM_DOCSTRING = (
     "Symbolic skeleton for an ODE system.\n\n"

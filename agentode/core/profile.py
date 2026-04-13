@@ -6,7 +6,7 @@ import os.path
 from typing import List, Dict, Any
 import logging
 import json
-from llmode.core import code_manipulation
+from agentode.core import code_manipulation
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -129,7 +129,7 @@ class Profiler:
         llm_source = getattr(function, 'llm_source', None)
         llm_model_name = getattr(function, 'llm_model_name', None)
         # log attributes of the function
-        from llmode.core import param_utils
+        from agentode.core import param_utils
         num_params = param_utils.count_params_used(function.body)
         print(f'================= Evaluated Function =================')
         print(f'{function_str}')

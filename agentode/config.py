@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Configuration of a LLMODE experiment."""
+"""Configuration of a AgentODE experiment."""
 from __future__ import annotations
 import dataclasses
 from typing import Type
 import os
 
-from llmode.core import sampler
-from llmode.core import evaluator
+from agentode.core import sampler
+from agentode.core import evaluator
 
 
 @dataclasses.dataclass(frozen=True)
@@ -42,7 +42,7 @@ class ExperienceBufferConfig:
 
 @dataclasses.dataclass(frozen=True)
 class Config:
-    """Configuration for LLMODE experiments.
+    """Configuration for AgentODE experiments.
 
     Args:
         experience_buffer: Evolution multi-population settings

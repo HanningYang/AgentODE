@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from llmode.ode import initial_condition_utils
+from agentode.ode import initial_condition_utils
 
 
 def polynomial_quantile_stats_deg01(values: np.ndarray) -> np.ndarray:

@@ -8,10 +8,10 @@ import numpy as np
 import torch
 import pandas as pd
 
-from llmode.core import pipeline
-from llmode import config
-from llmode.core import sampler
-from llmode.core import evaluator
+from agentode.core import pipeline
+from agentode import config
+from agentode.core import sampler
+from agentode.core import evaluator
 
 
 parser = ArgumentParser()

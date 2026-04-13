@@ -18,15 +18,15 @@ import numpy as np
 import requests
 from openai import OpenAI as _OpenAIClient
 
-from llmode.agent import prompt_builder
-from llmode.agent import violation_check, tool_executor
-from llmode.agent import figures as _figures
-from llmode.agent.history import IterationHistory, build_iteration_index
-from llmode.core import code_manipulation
-from llmode.core import param_utils
+from agentode.agent import prompt_builder
+from agentode.agent import violation_check, tool_executor
+from agentode.agent import figures as _figures
+from agentode.agent.history import IterationHistory, build_iteration_index
+from agentode.core import code_manipulation
+from agentode.core import param_utils
 
 
-DEBUG_PRINTS = os.environ.get("LLMODE_DEBUG_PRINTS", "0") == "1"
+DEBUG_PRINTS = os.environ.get("AGENTODE_DEBUG_PRINTS", "0") == "1"
 
 _W = 72  # banner width
 
@@ -64,7 +64,7 @@ class ParameterAgent:
         self._sample_order = sample_order
         self._logger = None
         if log_dir is not None and sample_order is not None:
-            from llmode.agent.workspace_logger import WorkspaceLogger
+            from agentode.agent.workspace_logger import WorkspaceLogger
             self._logger = WorkspaceLogger(problem_name, log_dir, sample_order)
 
         self._spec_path = os.path.join("specs_params", f"spec_params_{problem_name}.txt")
@@ -603,7 +603,7 @@ class ParameterAgent:
         sample_order: Optional[int] = None,
     ) -> Tuple[Optional[float], Optional[str], Optional[Dict]]:
         """Return (score, feedback, log_sl_data)."""
-        from llmode.metrics.synthetic_likelihood import (
+        from agentode.metrics.synthetic_likelihood import (
             _evaluate_system_logsl_core,
             build_log_sl_json_data,
         )
@@ -627,7 +627,7 @@ class ParameterAgent:
     ) -> Tuple[Optional[str], Optional[Dict]]:
         """Return (text_report, report_dict) for implausible trajectories."""
         try:
-            from llmode.ode import initial_condition_utils, ode_simulator
+            from agentode.ode import initial_condition_utils, ode_simulator
 
             means, _ = param_utils.param_distributions_to_arrays(params)
             ic_config = initial_condition_utils.load_ic_config(self._problem_name)
@@ -667,7 +667,7 @@ class ParameterAgent:
     ) -> bool:
         """Return True if this candidate is competitive enough to extend the budget."""
         try:
-            from llmode.metrics import mntd_score as _mntd
+            from agentode.metrics import mntd_score as _mntd
 
             dist = _mntd.evaluate_system_mntd(
                 system_func=self._system_func,
@@ -996,7 +996,7 @@ class ParameterAgent:
         if self._cached_best_params is not None and self._cached_best_params == params:
             return
 
-        from llmode.ode import initial_condition_utils, ode_simulator
+        from agentode.ode import initial_condition_utils, ode_simulator
         import pandas as pd
 
         ic_config = initial_condition_utils.load_ic_config(self._problem_name)

@@ -14,7 +14,7 @@ synthetic data using data-driven IQR normalisation:
   - Aggregate score = mean of all non-NaN d_i' (lower is better).
 
 Observed pooled stats (value + iqr_obs) are precomputed once per problem by
-`llmode.agent.time_series_stats.save_observed_stats` and stored in:
+`agentode.agent.time_series_stats.save_observed_stats` and stored in:
 
     workspace/{problem}/stats/ts_stats.csv
 """
@@ -28,8 +28,8 @@ import os
 import numpy as np
 import pandas as pd
 
-from llmode.agent.time_series_stats import collect_per_trajectory_stats, save_observed_stats
-from llmode.ode import initial_condition_utils
+from agentode.agent.time_series_stats import collect_per_trajectory_stats, save_observed_stats
+from agentode.ode import initial_condition_utils
 
 
 N_PATIENTS_MNTD = 1000
@@ -234,8 +234,8 @@ def evaluate_system_mntd(
     standardization: bool = True,  # kept for API compatibility; unused here
 ) -> float | None:
     """Evaluate a system via Mean Normalized Trajectory Discrepancy (MNTD)."""
-    from llmode.ode import ode_simulator
-    from llmode.core import param_utils
+    from agentode.ode import ode_simulator
+    from agentode.core import param_utils
 
     if param_distributions is None:
         return None
@@ -468,4 +468,3 @@ def compare_stats_iqr_from_dfs(
         result.to_csv(out_path, index=False, na_rep="NaN")
 
     return result, agg_score
-

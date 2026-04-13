@@ -16,7 +16,7 @@
 """A multi-island experience buffer that implements the evolutionary algorithm."""
 from __future__ import annotations
 
-from llmode.core import profile
+from agentode.core import profile
 from collections.abc import Mapping, Sequence
 import copy
 import dataclasses
@@ -28,8 +28,8 @@ from absl import logging
 import numpy as np
 import scipy
 
-from llmode.core import code_manipulation
-from llmode import config as config_lib
+from agentode.core import code_manipulation
+from agentode import config as config_lib
 
 
 Signature = Tuple[float, ...]
@@ -323,7 +323,7 @@ class Island:
         sorted_implementations = [implementations[i] for i in indices]
         version_generated = len(sorted_implementations) + 1
 
-        if os.environ.get("LLMODE_DEBUG_PRINTS", "0") == "1":
+        if os.environ.get("AGENTODE_DEBUG_PRINTS", "0") == "1":
             sample_orders = [
                 getattr(impl, 'global_sample_nums', None)
                 for impl in sorted_implementations

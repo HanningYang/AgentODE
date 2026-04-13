@@ -1,20 +1,22 @@
-# LLM-ODE: Suitability of LLM and Expert Informed Frameworks for Inferring Longitudinal Rare Disease Models
+# AgentODE: Suitability of LLM and Expert Informed Frameworks for Inferring Longitudinal Rare Disease Models
 
 ## Overview
-**LLM-ODE:** A privacy-preserving framework for discovering ODE-based disease progression models from summary statistics using large language models, through iterative refinement. The framework supports:
+**AgentODE:** A privacy-preserving framework for discovering ODE-based disease progression models from summary statistics using large language models, through iterative refinement. The framework supports:
 - **ODE skeleton discovery** - LLM-guided generation and refinement of ODE system structures informed by domain knowledge
 - **Parameter distribution inference** - Estimation of population-level parameter distributions from summary statistics
 - **Expert-informed priors** - Incorporation of clinical knowledge through prompt specifications
 
-![LLM-ODE-viz](./images/llm-ode.png)
+![AgentODE overview](./images/overview_agentODE.png)
+
+![AgentODE parameter inference](./images/params_inference.png)
 
 ## Installation
 
-Create a conda environment and install dependencies:
+Create a conda environment and install dependencies.
 
 ```bash
-conda create -n llmode 
-conda activate llmode
+conda create -n agentode python=3.11 pip
+conda activate agentode
 pip install -r requirements.txt
 ```
 
@@ -180,7 +182,7 @@ python main.py \
   --log_path logs/aki_run1
 ```
 
-> **Debug logging:** set `LLMODE_DEBUG_PRINTS=1` to print prompts, LLM responses, parameter distributions, and island states.
+> **Debug logging:** set `AGENTODE_DEBUG_PRINTS=1` to print prompts, LLM responses, parameter distributions, and island states.
 
 #### Resuming an interrupted run
 
@@ -221,7 +223,7 @@ python analysis/posthoc/evaluate_and_visualize_system.py \
 Returns: Summary statistics comparison (observed vs simulated), synthetic log-likelihood, and trajectory visualizations saved to the log directory.
 
 ### Configuration
-Adjust pipeline parameters in [config.py](llmode/config.py).
+Adjust pipeline parameters in [config.py](agentode/config.py).
 
 
 

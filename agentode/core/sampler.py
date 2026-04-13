@@ -24,9 +24,9 @@ import os
 import json
 import requests
 
-from llmode.core import evaluator
-from llmode.core import buffer
-from llmode import config as config_lib
+from agentode.core import evaluator
+from agentode.core import buffer
+from agentode import config as config_lib
 
 # pip install aisuite openai
 import aisuite as ai
@@ -34,7 +34,7 @@ from openai import OpenAI as _OpenAIClient
 
 
 # Global flag to control debug printing for prompts / LLM outputs.
-DEBUG_PRINTS = os.environ.get("LLMODE_DEBUG_PRINTS", "0") == "1"
+DEBUG_PRINTS = os.environ.get("AGENTODE_DEBUG_PRINTS", "0") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +263,7 @@ class LocalLLM(LLM):
                 or getattr(config, "api_model", None)
                 or os.environ.get("LOCAL_LLM_MODEL_NAME")
             )
-            print("\n=== [LLMODE] STRUCTURE LLM CONFIG ===")
+            print("\n=== [AgentODE] STRUCTURE LLM CONFIG ===")
             print(f"Backend : {mode}")
             print(f"Model   : {model_name}")
             print("=====================================\n")

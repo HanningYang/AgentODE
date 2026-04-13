@@ -1,7 +1,7 @@
 """Compare summary statistics between observed and synthetic datasets using IQR normalisation.
 
 This is a CLI wrapper around the core MNTD implementation in
-`llmode.metrics.mntd_score`.
+`agentode.metrics.mntd_score`.
 
 Usage:
     python summary_stats/compare_stats_iqr.py --obs data/real.csv --syn data/synthetic.csv
@@ -15,7 +15,7 @@ import argparse
 
 import pandas as pd
 
-from llmode.metrics.mntd_score import compare_stats_iqr_from_dfs
+from agentode.metrics.mntd_score import compare_stats_iqr_from_dfs
 
 
 def run(obs_path: str, syn_path: str, out_path: str) -> None:
@@ -54,4 +54,3 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     run(obs_path=args.obs, syn_path=args.syn, out_path=args.out)
-

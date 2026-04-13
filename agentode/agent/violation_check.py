@@ -1,7 +1,7 @@
 """Agent-facing helpers for trajectory plausibility diagnostics.
 
 This module wraps the low-level physiological validity check from
-`llmode.ode.ode_simulator` and formats a human-readable report string
+`agentode.ode.ode_simulator` and formats a human-readable report string
 that can be injected into LLM prompts.
 """
 
@@ -11,8 +11,8 @@ import contextlib
 
 import numpy as np
 
-from llmode.ode import initial_condition_utils
-from llmode.ode.ode_simulator import check_trajectory_normal_range_validity
+from agentode.ode import initial_condition_utils
+from agentode.ode.ode_simulator import check_trajectory_normal_range_validity
 
 
 def _print_trajectory_value_stats(

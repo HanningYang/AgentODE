@@ -16,8 +16,8 @@ import matplotlib.pyplot as plt
 import scipy.stats
 from matplotlib.lines import Line2D
 
-from llmode.config import Config
-from llmode.ode import initial_condition_utils
+from agentode.config import Config
+from agentode.ode import initial_condition_utils
 
 _DEFAULT_CONFIG = Config()
 

@@ -22,17 +22,17 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from llmode.core import code_manipulation
-from llmode.ode import initial_condition_utils
-from llmode.ode import ode_simulator
-from llmode.core import param_utils
-from llmode.metrics.summary_stats import (
+from agentode.core import code_manipulation
+from agentode.ode import initial_condition_utils
+from agentode.ode import ode_simulator
+from agentode.core import param_utils
+from agentode.metrics.summary_stats import (
     compute_standardization_params,
     compute_summary_stats_from_df,
     compute_summary_stats,
     get_stat_names,
 )
-from llmode.metrics.mntd_score import evaluate_system_mntd
+from agentode.metrics.mntd_score import evaluate_system_mntd
 
 
 def load_function_from_log(

@@ -6,8 +6,8 @@ import inspect
 import numpy as np
 from scipy.integrate import odeint
 from typing import Callable, Dict, Optional, Tuple
-from llmode.ode import initial_condition_utils
-from llmode.core import code_manipulation
+from agentode.ode import initial_condition_utils
+from agentode.core import code_manipulation
 import torch
 
 

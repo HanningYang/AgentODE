@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-""" Implementation of the LLMODE pipeline. """
+""" Implementation of the AgentODE pipeline. """
 from __future__ import annotations
 
 from typing import Any, Tuple, Sequence
@@ -22,15 +22,15 @@ import time
 
 import numpy as np
 
-from llmode.core import code_manipulation
-from llmode import config as config_lib
-from llmode.core import evaluator
-from llmode.core import buffer
-from llmode.core import sampler
-from llmode.core import profile
-from llmode.core import param_utils
-from llmode.core import checkpoint as checkpoint_lib
-from llmode.metrics import mntd_score as _mntd_score
+from agentode.core import code_manipulation
+from agentode import config as config_lib
+from agentode.core import evaluator
+from agentode.core import buffer
+from agentode.core import sampler
+from agentode.core import profile
+from agentode.core import param_utils
+from agentode.core import checkpoint as checkpoint_lib
+from agentode.metrics import mntd_score as _mntd_score
 
 
 def _extract_function_name(specification: str) -> str:
@@ -55,7 +55,7 @@ def main(
         problem_name: str,
         **kwargs
 ):
-    """ Launch a LLMODE experiment.
+    """ Launch a AgentODE experiment.
     Args:
         specification: the boilerplate code for the problem.
         inputs       : the data instances for the problem.
@@ -146,7 +146,7 @@ def main(
             t0 = time.time()
             score_value = None
             try:
-                from llmode.agent.param_agent import ParameterAgent
+                from agentode.agent.param_agent import ParameterAgent
                 agent = ParameterAgent(
                     config=config,
                     problem_name=problem_name,
