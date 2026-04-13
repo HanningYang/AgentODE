@@ -28,3 +28,4 @@ analysis/posthoc/print_logsl.py
 workspace/*/logs/
 
 
+data/eb/
