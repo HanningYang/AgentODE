@@ -149,7 +149,7 @@ def build_iteration_index(
     """Build a formatted iteration history table for a sample's parameter optimization.
 
     Reads each ``iter_N`` directory under
-    ``workspace/{problem_name}/logs/{log_path}/sample_{sample_number}/``
+    ``workspace/{problem_name}/logs/{basename(log_path)}/sample_{sample_number}/``
     and assembles a table with columns: iter, type, log_sl, summary.
 
     Args:
@@ -163,7 +163,7 @@ def build_iteration_index(
         ``{iteration_index}``.
     """
     sample_dir = os.path.join(
-        "workspace", problem_name, log_path, f"sample_{sample_number}"
+        "workspace", problem_name, "logs", os.path.basename(log_path), f"sample_{sample_number}"
     )
 
     if not os.path.isdir(sample_dir):

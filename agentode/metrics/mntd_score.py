@@ -28,7 +28,7 @@ import os
 import numpy as np
 import pandas as pd
 
-from agentode.agent.time_series_stats import collect_per_trajectory_stats, save_observed_stats
+from agentode.agent.time_series_stats import collect_per_trajectory_stats
 from agentode.ode import initial_condition_utils
 
 
@@ -41,7 +41,10 @@ _DECIMALS: Dict[str, int] = {
     "iqr":                3,
     "skewness":           3,
     "outlier_frac":       4,
+    "value_range":        3,
     "acf_lag1":           4,
+    "acf_lag2":           4,
+    "acf_lag3":           4,
     "acf_first_zero":     2,
     "dominant_freq":      6,
     "spectral_entropy":   4,
@@ -59,6 +62,7 @@ _DECIMALS: Dict[str, int] = {
     "mean_abs_diff":      3,
     "level_corr":         4,
     "diff_corr":          4,
+    "ccf_lag1":           4,
 }
 _DEFAULT_DECIMALS = 4
 
@@ -76,45 +80,18 @@ def _nanmean(values) -> float:
 
 
 def _ensure_ts_stats(problem_name: str) -> pd.DataFrame:
-    """Ensure pooled observed stats exist for a problem and return them.
+    """Load pooled observed stats for scoring.
 
-    If `workspace/{problem}/stats/ts_stats.csv` does not exist or lacks
-    `iqr_obs`, recompute using `save_observed_stats`.
+    Prefers ``ts_stats_test.csv`` when it exists (train/test split problems),
+    falls back to ``ts_stats.csv`` otherwise.
     """
     out_root = os.path.join("workspace", problem_name, "stats")
-    csv_path = os.path.join(out_root, "ts_stats.csv")
+    test_csv = os.path.join(out_root, "ts_stats_test.csv")
+    default_csv = os.path.join(out_root, "ts_stats.csv")
 
-    if not os.path.exists(csv_path):
-        data_path = os.path.join("data", problem_name, f"{problem_name}.csv")
-        save_observed_stats(
-            data_path=data_path,
-            out_root=out_root,
-            dataset_name="",
-            time_col="t",
-            id_col="id",
-            agg="mean",
-            ar_order=3,
-            min_patients=3,
-        )
+    csv_path = test_csv if os.path.exists(test_csv) else default_csv
 
-    df = pd.read_csv(csv_path)
-
-    if "iqr_obs" not in df.columns:
-        # Regenerate with the new pooled-per-trajectory semantics.
-        data_path = os.path.join("data", problem_name, f"{problem_name}.csv")
-        save_observed_stats(
-            data_path=data_path,
-            out_root=out_root,
-            dataset_name="",
-            time_col="t",
-            id_col="id",
-            agg="mean",
-            ar_order=3,
-            min_patients=3,
-        )
-        df = pd.read_csv(csv_path)
-
-    return df
+    return pd.read_csv(csv_path)
 
 
 def _mntd_distance_from_trajectories(
@@ -265,7 +242,11 @@ def evaluate_system_mntd(
         observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
         return trajectories[valid_mask][..., observed_indices]
 
-    if backend == "gpu":
+    use_gpu_solver = backend == "gpu" and ode_simulator._cuda_available()
+    if backend == "gpu" and not use_gpu_solver:
+        print("[mntd] CUDA unavailable; falling back to CPU odeint.")
+
+    if use_gpu_solver:
         import torch
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

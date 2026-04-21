@@ -23,7 +23,10 @@ TOOL_REGISTRY: Dict[str, Any] = {
     "iqr":                tsf.iqr,
     "skewness":           tsf.skewness,
     "outlier_frac":       tsf.outlier_frac,
+    "value_range":        tsf.value_range,
     "acf_lag1":           tsf.acf_lag1,
+    "acf_lag2":           tsf.acf_lag2,
+    "acf_lag3":           tsf.acf_lag3,
     "acf_first_zero":     tsf.acf_first_zero,
     "dominant_freq":      tsf.dominant_freq,
     "spectral_entropy":   tsf.spectral_entropy,
@@ -41,6 +44,7 @@ TOOL_REGISTRY: Dict[str, Any] = {
     "mean_abs_diff":      tsf.mean_abs_diff,
     "level_corr":         tsf.level_corr,
     "diff_corr":          tsf.diff_corr,
+    "ccf_lag1":           tsf.ccf_lag1,
 }
 
 # Decimal places to use when formatting each statistic in the comparison table.
@@ -50,7 +54,10 @@ _DECIMALS: Dict[str, int] = {
     "iqr":                3,
     "skewness":           3,
     "outlier_frac":       4,
+    "value_range":        3,
     "acf_lag1":           4,
+    "acf_lag2":           4,
+    "acf_lag3":           4,
     "acf_first_zero":     2,
     "dominant_freq":      6,
     "spectral_entropy":   4,
@@ -68,12 +75,20 @@ _DECIMALS: Dict[str, int] = {
     "mean_abs_diff":      3,
     "level_corr":         4,
     "diff_corr":          4,
+    "ccf_lag1":           4,
 }
 
 
 def _load_ts_stats(problem_name: str) -> List[Dict[str, Any]]:
-    """Load precomputed time-series stats for a problem."""
-    stats_path = os.path.join("workspace", problem_name, "stats", "ts_stats.json")
+    """Load precomputed time-series stats for a problem.
+
+    Prefers ``ts_stats_train.json`` (train split) when it exists, falling back
+    to ``ts_stats.json`` for problems without a train/test split.
+    """
+    stats_dir = os.path.join("workspace", problem_name, "stats")
+    train_path = os.path.join(stats_dir, "ts_stats_train.json")
+    default_path = os.path.join(stats_dir, "ts_stats.json")
+    stats_path = train_path if os.path.exists(train_path) else default_path
     with open(stats_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -92,19 +107,21 @@ def format_stat_table(
     Returns:
         A formatted multiline string suitable for inserting into `{stat_table}`.
     """
-    # Index ts_stats.json by (statistic, variable).
+    # Index ts_stats.json by (statistic, variable) — normalise variable to
+    # lowercase so lookups are case-insensitive (ts_stats may use 'Gp'/'A'
+    # while the LLM returns 'gp'/'a').
     ts_stats = _load_ts_stats(problem_name)
     index: Dict[tuple[str, str], float | None] = {}
     for row in ts_stats:
         stat = str(row.get("statistic"))
-        var = str(row.get("variable"))
+        var = str(row.get("variable")).lower()
         index[(stat, var)] = row.get("value")
 
     def _lookup_observed(tool_name: str, entry: Dict[str, Any]) -> float | None:
         # Map tool name directly to ts_stats "statistic" field.
         stat_key = tool_name
 
-        if tool_name in ("diff_corr", "level_corr"):
+        if tool_name in ("diff_corr", "level_corr", "ccf_lag1"):
             var_x = str(entry.get("variable_x"))
             var_y = str(entry.get("variable_y"))
             # ts_stats uses "var1__var2" ordering.
@@ -119,7 +136,7 @@ def format_stat_table(
     seen: Dict[tuple[str, str], int] = {}
     for i, res in enumerate(tool_results):
         tool_name = str(res.get("tool"))
-        if tool_name in ("diff_corr", "level_corr"):
+        if tool_name in ("diff_corr", "level_corr", "ccf_lag1"):
             key = (tool_name, f"{res.get('variable_x')}__{res.get('variable_y')}")
         else:
             key = (tool_name, str(res.get("variable")))
@@ -130,7 +147,7 @@ def format_stat_table(
     rows: List[tuple[str, str, float | None, float | None]] = []
     for res in deduped:
         tool_name = str(res.get("tool"))
-        if tool_name in ("diff_corr", "level_corr"):
+        if tool_name in ("diff_corr", "level_corr", "ccf_lag1"):
             label = f"{res.get('variable_x')} vs {res.get('variable_y')}"
         else:
             label = str(res.get("variable"))
@@ -237,7 +254,7 @@ def execute_tool_calls(
         if fn is None:
             raise KeyError(f"Unknown tool {tool_name!r} in TOOL_REGISTRY.")
 
-        if tool_name in ("diff_corr", "level_corr"):
+        if tool_name in ("diff_corr", "level_corr", "ccf_lag1"):
             var_x = arguments["variable_x"]
             var_y = arguments["variable_y"]
             idx_x = _get_axis_index(biomarker_order, var_x)

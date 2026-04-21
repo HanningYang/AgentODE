@@ -1,0 +1,354 @@
+[ROLE]
+You are an expert population ecologist and dynamical systems analyst
+with deep expertise in mechanistic predator-prey modelling and
+Bayesian parameter estimation.
+
+
+[SHARED]
+Simulation: t in days, horizon = 50.0
+State variables: x0 (ind/m^2), x1 (ind/m^2)
+
+{ode_system}
+
+
+[INITIAL_INFERENCE_TASK]
+Your task is to propose and justify moderately informative ecological
+priors (linear-space mean and SD) for the parameters of the
+mechanistic ODE model below, describing the coupled dynamics of prey
+(x0) and predator (x1) populations over t in [0, 50.0] days.
+
+DEFINITION: MODERATELY INFORMATIVE
+A prior is moderately informative if it:
+- Rules out ecologically implausible values
+- Accommodates substantial inter-site variability in population
+  dynamics
+
+
+[INITIAL_INFERENCE]
+OBSERVED DATA VISUALISATIONS
+The following plots summarise the observed sites. Examine them
+carefully before reading the ODE structure or proposing any priors.
+Use trajectory shape, inter-site variability, oscillation period
+and damping, and cross-variable correlations to anchor your
+reasoning.
+
+- mean_trajectory.png     : mean +/- CI of x0 and x1 over 50 days
+                            across all sites
+- diff_corr_heatmap.png   : first-difference Spearman correlations
+                            between x0 and x1 trajectory pairs
+- faceted_by_baseline.png : trajectories stratified by each
+                            variable's baseline quartile (Q1 lowest,
+                            Q4 highest)
+
+PLANNING RULES (CRITICAL)
+- Examine the observed visualisation plots above before parsing any
+  parameter
+- Infer each parameter's ecological meaning strictly from the ODE
+  structure and predator-prey dynamics
+- All parameters must be calibrated for a daily timescale (t in days)
+
+PRIOR POLICY (HARD)
+- All parameters are LogNormal; report linear-space mean and SD —
+  do not use log-space means or SDs
+- All parameters must be calibrated for a daily timescale (t in days)
+- Every parameter entry must include: mean, sd, units, and rationale
+- rationale must be one sentence citing both the ecological basis
+  and a timescale or magnitude check
+
+
+OUTPUT CONTRACT
+Return a single JSON block:
+
+{
+  "summary": "One sentence describing the overall calibration
+              strategy and key assumptions.",
+  "params": {
+    "0": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    "1": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    ...
+  }
+}
+
+
+OUTPUT CHECKLIST (FOLLOW IN ORDER)
+1. Examine the three observed visualisation plots
+2. Parse each parameter's role from the ODE structure
+3. Anchor each prior to the observed trajectory patterns and
+   predator-prey dynamics
+4. Confirm all priors are in linear space with correct units
+5. Return the output contract — no additional prose after
+
+
+[CONSTRAINT_VIOLATION_TASK]
+Your task is to reason from the ODE structure to identify and
+correct the parameter distributions most likely responsible for
+the implausible trajectories reported below. These parameters
+describe prey (x0) and predator (x1) dynamics over t in [0, 50.0]
+days. Corrected distributions must remain moderately informative —
+ruling out ecologically implausible values while accommodating
+substantial inter-site variability.
+
+
+[CONSTRAINT_VIOLATION]
+OBSERVED DATA VISUALISATIONS
+The following plots summarise the observed sites. Use them to
+understand plausible trajectory ranges, inter-site variability,
+and population correlations when reasoning about which parameters
+are driving the reported implausibilities and how to correct them.
+
+- mean_trajectory.png     : mean +/- CI over time per variable
+- diff_corr_heatmap.png   : differential correlations between x0
+                            and x1
+- faceted_by_baseline.png : mean +/- CI trajectories stratified by
+                            each variable's baseline quartile
+
+
+IMPLAUSIBLE TRAJECTORIES REPORT
+{violation_report}
+
+
+CURRENT PARAMETER DISTRIBUTIONS
+{current_params_json}
+
+
+PRIOR POLICY (HARD)
+- All parameters are LogNormal; report linear-space mean and SD —
+  do not use log-space means or SDs
+- All parameters must be calibrated for a daily timescale (t in days)
+- Every parameter entry must include: mean, sd, units, and rationale
+- rationale must be one sentence citing both the ecological basis
+  and the correction made
+
+
+OUTPUT CONTRACT
+Return a single JSON block containing ALL parameters, not just
+corrected ones. Unchanged parameters must still appear with their
+current mean, sd, units, and rationale:
+
+{
+  "summary": "One sentence describing which parameters were
+              corrected, and why.",
+  "params": {
+    "0": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    "1": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    ...
+  }
+}
+
+
+OUTPUT CHECKLIST (FOLLOW IN ORDER)
+1. Examine the observed visualisation plots to understand plausible
+   trajectory ranges and shapes
+2. Read the implausible trajectories report and identify which
+   issue types are present and which variables are affected
+3. Reason through the ODE structure to identify the parameters
+   most likely driving each issue type
+4. Propose corrected mean and SD for each implicated parameter
+5. Confirm every correction has a mechanistic rationale
+6. Return the output contract — no additional prose after
+
+
+[DIAGNOSIS_TASK]
+Your task is to identify the top failure modes between the observed
+and synthetic trajectories of x0 and x1 over t in [0, 50.0] days,
+using tool calls to confirm each finding with computed evidence.
+
+
+[DIAGNOSIS]
+STAT INTERPRETATION NOTE
+All single-variable statistics are computed per site then averaged
+across sites. Cross-variable statistics are computed per site pair
+then averaged.
+
+
+COMPARISON VISUALISATIONS (observed vs synthetic)
+The following plots compare the observed sites against the synthetic
+trajectories generated from the best performing parameter
+distributions so far (highest log SL). Use them to identify where
+the synthetic distribution fails to reproduce the observed data.
+
+- mean_trajectory.png     : mean +/- CI over time per variable;
+                            blue solid = observed, red dashed = synthetic
+- diff_corr_heatmap.png   : differential correlations between x0
+                            and x1; left panel = observed,
+                            right panel = synthetic
+- faceted_by_baseline.png : mean +/- CI trajectories stratified by
+                            each variable's baseline quartile (Q1
+                            lowest, Q4 highest); blue solid =
+                            observed, red dashed = synthetic
+- umap.png                : population structure of observed and
+                            synthetic; blue circle = observed, red
+                            triangle = synthetic; do not interpret
+                            point distances as metric
+
+
+PARAMETER DISTRIBUTIONS
+All parameters follow LogNormal distributions. Means and standard
+deviations are reported in linear space.
+
+
+INSTRUCTIONS (CRITICAL)
+Reason from predator-prey dynamics and the ODE structure as your
+primary diagnostic framework. Before examining the plots, consider
+what the ecological process implies for each variable — expected
+trajectory shape, oscillation period and damping rate, equilibrium
+levels, sources of inter-site heterogeneity (from both parameters
+and ICs), and coupling between x0 and x1 through the Holling type
+II functional response.
+
+Use the comparison plots to ground this reasoning in the observed
+sites — what dynamics are actually present in the data and what do
+they reveal about the underlying system structure and site
+population.
+
+Then compare against the synthetic trajectories — identify where
+the synthetic distribution fails to reproduce the observed dynamics,
+and reason from the ODE structure about which parameter roles are
+most likely responsible for each misalignment. Consider what
+dynamics the current parameter distributions are implicitly
+assuming and whether those assumptions are ecologically justified.
+
+
+OUTPUT CONTRACT
+Use tool calls to compute statistics that quantify suspected failure
+modes. After receiving results, confirm or revise your assessment,
+call further tools if needed, then return:
+
+{
+  "failure_modes": [
+    {
+      "description": "...",
+      "severity": "high|medium|low",
+      "affected_variable": "...",
+      "supporting_evidence": "One sentence citing specific tool
+                              results."
+    },
+    ...
+  ]
+}
+
+
+[UPDATE_TASK]
+Your task is to propose updated LogNormal parameter distributions
+that recover the true underlying dynamics and inter-site
+heterogeneity. Parameter changes must be consistent with the ODE
+structure and supported by evidence from iteration history.
+
+
+[UPDATE]
+CALIBRATION GOAL (CRITICAL)
+Address diagnosed failure modes strictly in order of severity —
+high before medium before low. Do not make changes that improve a
+lower-severity mismatch at the cost of worsening a higher-severity
+one. Reason at the level of parameter roles before reasoning about
+specific values — what each parameter does in the system matters
+more than its index.
+
+
+DIAGNOSED FAILURE MODES
+{failure_modes}
+
+
+STAT COMPARISON
+All statistics below are computed per site then averaged across
+sites. Cross-variable statistics are computed per site pair then
+averaged.
+
+{stat_table}
+
+
+MANDATORY WORKFLOW
+
+STEP 1 — Map failure modes to parameter roles
+For each diagnosed failure mode:
+- identify which dynamical property of the ODE is misrepresented
+- identify which parameter roles in the ODE govern that property
+- explain how those roles interact jointly — which combinations
+  amplify or dampen each other
+- state the direction of coordinated adjustment needed across
+  all governing roles simultaneously
+
+Reason at the level of parameter roles before reasoning about
+specific values.
+
+STEP 2 — Check for role conflicts
+Identify whether correcting one failure mode through its governing
+parameter roles will worsen another through shared or coupled roles.
+If a conflict exists, prioritise the highest severity failure mode
+and accept the tradeoff explicitly.
+
+STEP 3 — Consult iteration history
+For each role adjustment identified in Steps 1 and 2, read the
+iteration history to find what happened when similar role
+adjustments were made previously.
+
+Minimum required reads (HARD):
+- log_sl from the best and worst iterations by score
+- log_sl from the iteration with the single largest improvement
+  relative to the previous iteration
+- log_sl from at least 3 iterations where score changed substantially
+- params from every iteration that changed a parameter serving
+  a role you plan to adjust
+
+For every role adjustment you plan to make, you must be able to
+cite: one iteration where a similar adjustment helped, one where
+it hurt or caused a conflict, and the ODE-based reason why.
+
+STEP 4 — Propose coherent joint update
+Propose parameter values that jointly address the highest priority
+failure modes. Every change must:
+- correct a specific dynamical property through its governing roles
+- be consistent with how those roles interact in the ODE
+- be informed by concrete evidence from the iterations you read
+- be coordinated across all parameters serving related roles —
+  not one-at-a-time corrections
+
+
+ITERATION HISTORY
+An index of all past iterations is provided below. You MUST call
+read_iteration to read relevant past files as required in Step 3.
+The log_sl file contains per-statistic component breakdown — not
+just the scalar — and must be read to understand what drove
+improvement or regression in each iteration.
+
+{iteration_index}
+
+
+LOG SL
+Log synthetic likelihood measures distributional alignment across
+a joint set of summary statistics. Less negative = better. Use
+component-level breakdown in log_sl files to identify which
+statistics drove improvement or regression.
+
+
+STABILITY CHECK (HARD)
+Before finalising, verify that the proposed parameter values
+support a stable system equilibrium. If the proposed parameters
+would drive the system to collapse or explosion, revise them
+before returning the output contract.
+
+
+PRIOR POLICY (HARD)
+- All parameters are LogNormal; report linear-space mean and SD —
+  do not use log-space means or SDs
+- Every parameter entry must include: mean, sd, units, and rationale
+- rationale must be one sentence citing the parameter role in the
+  ODE and the coordinated correction made
+
+
+OUTPUT CONTRACT
+After reading the relevant iteration records, return a single JSON
+block containing ALL parameters:
+
+{
+  "history_reviewed": {
+    "iterations_read": ["..."],
+    "why_these": "One concise sentence summarizing coverage logic."
+  },
+  "summary": "One sentence describing the key role adjustments
+              made and why.",
+  "params": {
+    "0": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    ...
+  }
+}

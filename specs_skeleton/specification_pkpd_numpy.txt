@@ -1,0 +1,62 @@
+"""
+Find the symbolic skeleton of an ODE system representing
+a four-variable pharmacological and immunological process.
+
+The system involves four coupled state variables:
+
+    - depot (amount): Drug amount in the absorption compartment.
+
+    - central (amount): Drug amount in the central compartment.
+
+    - immune (cells): Immune cell population.
+
+    - effector (cells): Effector cell population.
+
+The time unit is days. Observations span t in [0, 50.0]
+with 101 timepoints (dt = 0.5).
+
+HARD CONSTRAINT:
+- The parameter array has at most MAX_NPARAMS = 10 slots.
+- Do NOT skip indices.
+- Use only as many parameters as necessary; avoid introducing
+  redundant parameters.
+- You must not use any params[k] with k >= MAX_NPARAMS.
+"""
+
+import numpy as np
+
+MAX_NPARAMS = 10
+params = [1.0] * MAX_NPARAMS
+
+
+@system.evolve
+def system(biomarkers: np.ndarray, params: np.ndarray) -> np.ndarray:
+    """Symbolic skeleton for a 4-variable ODE system.
+
+    Args:
+        biomarkers: A numpy array containing
+                    [depot, central, immune, effector].
+        params: Array of numeric constants or parameters to be optimized.
+                You must not use any params[k] with k >= MAX_NPARAMS.
+    Returns:
+        A numpy array representing the temporal derivatives (d/dt)
+        of the state variables
+        [d_depot/dt, d_central/dt, d_immune/dt, d_effector/dt].
+    """
+    depot, central, immune, effector = biomarkers
+
+    # ---- depot dynamics ----
+    d_depot = params[0] * depot
+
+    # ---- central dynamics ----
+    d_central = params[1] * central
+
+    # ---- immune dynamics ----
+    d_immune = params[2] * immune
+
+    # ---- effector dynamics ----
+    d_effector = params[3] * effector
+
+    d_biomarkers = np.array([d_depot, d_central, d_immune, d_effector],
+                            dtype=float)
+    return d_biomarkers

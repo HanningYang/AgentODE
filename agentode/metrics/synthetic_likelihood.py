@@ -595,6 +595,7 @@ def _evaluate_system_logsl_core(
 ) -> Tuple[float | None, Dict[str, np.ndarray] | None, np.ndarray | None, List[str] | None, List[str] | None]:
     """Core synthetic-likelihood evaluation returning diagnostics alongside score."""
     from agentode.ode import initial_condition_utils, ode_simulator
+    from agentode.agent import violation_check
     from agentode.core import param_utils
 
     # Load configuration and observed data (cached per problem).
@@ -619,8 +620,14 @@ def _evaluate_system_logsl_core(
             distribution="lognormal",
         )
 
+    invalid_simulation_context: Dict[str, object] = {}
+
     # Choose simulator backend.
-    if backend == "gpu":
+    use_gpu_solver = backend == "gpu" and ode_simulator._cuda_available()
+    if backend == "gpu" and not use_gpu_solver:
+        print("[synthetic_likelihood] CUDA unavailable; falling back to CPU odeint.")
+
+    if use_gpu_solver:
         import torch
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -653,6 +660,19 @@ def _evaluate_system_logsl_core(
                 config=config,
                 check_nans=True,
             )
+            valid_fraction = float(valid_mask.sum()) / float(n_patients) if n_patients > 0 else 0.0
+            if valid_fraction < MIN_VALID_FRACTION and not invalid_simulation_context:
+                invalid_simulation_context["valid_fraction"] = valid_fraction
+                invalid_simulation_context["report_dict"] = violation_check.compute_violation_report_dict(
+                    trajectories=trajectories,
+                    config=config,
+                    check_nans=True,
+                )
+                invalid_simulation_context["report_text"] = violation_check.get_unplausible_trajectory_report(
+                    trajectories=trajectories,
+                    config=config,
+                    check_nans=True,
+                )
 
             observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
 
@@ -686,6 +706,19 @@ def _evaluate_system_logsl_core(
                 config=config,
                 check_nans=True,
             )
+            valid_fraction = float(valid_mask.sum()) / float(n_patients) if n_patients > 0 else 0.0
+            if valid_fraction < MIN_VALID_FRACTION and not invalid_simulation_context:
+                invalid_simulation_context["valid_fraction"] = valid_fraction
+                invalid_simulation_context["report_dict"] = violation_check.compute_violation_report_dict(
+                    trajectories=trajectories,
+                    config=config,
+                    check_nans=True,
+                )
+                invalid_simulation_context["report_text"] = violation_check.get_unplausible_trajectory_report(
+                    trajectories=trajectories,
+                    config=config,
+                    check_nans=True,
+                )
             # Map observed biomarker names to their indices in the full config
             observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
 
@@ -714,8 +747,19 @@ def _evaluate_system_logsl_core(
         verbose=False,
         n_jobs=n_jobs,
     )
+    if (
+        details is not None
+        and details.get("error") is not None
+        and np.any(details["error"] == "validity fraction below threshold")
+        and invalid_simulation_context
+    ):
+        details["valid_fraction"] = np.array(
+            [float(invalid_simulation_context["valid_fraction"])], dtype=float
+        )
+        details["violation_report"] = invalid_simulation_context["report_dict"]
+        details["violation_report_text"] = invalid_simulation_context["report_text"]
     if not np.isfinite(log_likelihood):
-        return None, None, None, None, None
+        return float(log_likelihood), details, s_obs, stat_names, biomarker_names
 
     if verbose:
         # Optional diagnostics: print variance of each summary statistic under

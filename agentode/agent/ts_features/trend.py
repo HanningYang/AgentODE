@@ -1,5 +1,7 @@
 """Trend statistics for time series."""
 
+import warnings
+
 import numpy as np
 from scipy.stats import spearmanr
 
@@ -13,7 +15,12 @@ def spearman_trend(x: np.ndarray, time_index: np.ndarray) -> float:
     t = t[mask]
     if x.size < 2:
         return np.nan
-    corr, _ = spearmanr(t, x)
+    if np.all(x == x[0]):
+        print("[ts_features] constant trajectory detected — spearman_trend returning NaN")
+        return np.nan
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        corr, _ = spearmanr(t, x)
     return float(corr)
 
 
@@ -26,5 +33,10 @@ def spearman_trend_p_value(x: np.ndarray, time_index: np.ndarray) -> float:
     t = t[mask]
     if x.size < 2:
         return np.nan
-    _, pval = spearmanr(t, x)
+    if np.all(x == x[0]):
+        print("[ts_features] constant trajectory detected — spearman_trend_p_value returning NaN")
+        return np.nan
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _, pval = spearmanr(t, x)
     return float(pval)

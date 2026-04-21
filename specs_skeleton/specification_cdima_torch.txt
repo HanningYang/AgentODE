@@ -1,0 +1,54 @@
+"""
+Find the symbolic skeleton of an ODE system that represents a 
+two-dimensional activator-inhibitor chemical reaction system
+exhibiting oscillatory or convergent dynamics.
+
+The system involves two coupled state variables:
+
+    - x0 (concentration): Activator species concentration
+    - x1 (concentration): Inhibitor species concentration
+
+The time unit is dimensionless. Observations span t in [0, 40.0]
+with 101 timepoints (dt = 0.4).
+
+
+HARD CONSTRAINT:
+- The parameter array has at most MAX_NPARAMS = 6 slots.
+- Do NOT skip indices.
+- Use only as many parameters as necessary; avoid introducing
+  redundant parameters.
+- Always index parameters and biomarkers with ellipsis notation
+  params[..., k] and biomarkers[..., k] — never use params[k]
+  or biomarkers[k] directly.
+"""
+
+import torch
+
+MAX_NPARAMS = 6
+params = torch.ones(MAX_NPARAMS)
+
+
+@system.evolve
+def system(biomarkers: torch.Tensor, params: torch.Tensor, t: float) -> torch.Tensor:
+    """Symbolic skeleton for a 2-variable ODE system.
+
+    Args:
+        biomarkers: A torch tensor containing [x0, x1].
+        params: Tensor of numeric constants or parameters to be optimized.
+                You must not use any params[k] with k >= MAX_NPARAMS;
+                using more than 5 parameters is invalid.
+    Returns:
+        A torch tensor representing the temporal derivatives (d/dt)
+        of the state variables [dx0/dt, dx1/dt].
+    """
+    x0 = biomarkers[..., 0]
+    x1 = biomarkers[..., 1]
+
+    # ---- x0 dynamics ----
+    dx0 = -params[..., 0] * x0 * x1 / (x0 ** 2 + 1) - x0 + params[..., 1]
+
+    # ---- x1 dynamics ----
+    dx1 = params[..., 2] * x0 * (1 - x1 / (x0 ** 2 + 1))
+
+    d_biomarkers = torch.stack([dx0, dx1], dim=-1)
+    return d_biomarkers

@@ -162,6 +162,12 @@ def simulate_trajectories(
     print(f"Fraction of physiologically valid trajectories: {valid_fraction:.3f}")
 
     trajectories = trajectories[valid_mask]
+    if trajectories.shape[0] == 0:
+        raise RuntimeError(
+            "No physiologically valid trajectories were produced. "
+            "Check the ODE system and parameter distributions."
+        )
+
     observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
     trajectories_obs = trajectories[..., observed_indices]
 
@@ -366,7 +372,9 @@ def main():
     print(64*'=')
 
     # Compare summary statistics: observed vs simulated.
-    observed_data_path = f"data/{args.problem_name}/{args.problem_name}.csv"
+    _test_path = f"data/{args.problem_name}/{args.problem_name}_test.csv"
+    _default_path = f"data/{args.problem_name}/{args.problem_name}.csv"
+    observed_data_path = _test_path if os.path.exists(_test_path) else _default_path
     if os.path.exists(observed_data_path):
         print("\nComputing summary statistics comparison (observed vs simulated)...")
         observed_df = pd.read_csv(observed_data_path)
@@ -411,10 +419,6 @@ def main():
             backend=quad_backend,
             standardization=True,
         )
-        if distance is not None:
-            print(f"Euclidean summary-statistics distance: {distance:.2f}")
-        else:
-            print("Euclidean summary-statistics distance: None")
         print(64*'=')
     else:
         print("No parameter distributions provided; skipping quadratic score evaluation.")

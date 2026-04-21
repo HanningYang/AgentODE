@@ -20,7 +20,6 @@ from openai import OpenAI as _OpenAIClient
 
 from agentode.agent import prompt_builder
 from agentode.agent import violation_check, tool_executor
-from agentode.agent import figures as _figures
 from agentode.agent.history import IterationHistory, build_iteration_index
 from agentode.core import code_manipulation
 from agentode.core import param_utils
@@ -86,13 +85,12 @@ class ParameterAgent:
         self._system_func: Any = None
         self._system_code_str: str = ""
         self._use_gpu: bool = False
-        # Cached synthetic data and figures for the current best params.
+        # Cached synthetic data for the current best params.
         self._cached_best_params: Optional[Dict[str, Any]] = None
         self._cached_synthetic: Optional[np.ndarray] = None
         self._cached_time_grid: Optional[np.ndarray] = None
         self._cached_ic_config: Optional[Dict[str, Any]] = None
-        self._cached_figures_bytes: Dict[str, bytes] = {}
-        self._cached_figures_text: str = ""
+        self._last_invalid_score_details: Optional[Dict[str, Any]] = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -181,6 +179,7 @@ class ParameterAgent:
             )
             if extended_mode:
                 max_steps = extended_max_steps
+                no_improve_count = 0
 
         # ---- Step 3: optimization loop ------------------------------------------
         steps_done = 1
@@ -284,6 +283,7 @@ class ParameterAgent:
                         )
                         if extended_mode:
                             max_steps = extended_max_steps
+                            no_improve_count = 0
 
                 if DEBUG_PRINTS:
                     best_str = f"{best_score:.3f}" if best_score is not None else "None"
@@ -400,7 +400,7 @@ class ParameterAgent:
             (new_params, summary, failure_modes_data, tool_results)
             where failure_modes_data = {"failure_modes": [...], "tool_calls": [...]}.
         """
-        # Ensure synthetic data and comparison figures are cached for current best params.
+        # Ensure synthetic data are cached for current best params.
         try:
             self._ensure_best_synthetic_cache(current_best_params)
         except Exception as e:
@@ -448,7 +448,7 @@ class ParameterAgent:
         for _diag_turn in range(_MAX_DIAG_TURNS):
             raw_diag = self._request_llm(
                 current_diag_prompt,
-                images=self._cached_figures_bytes or None if _diag_turn == 0 else None,
+                images=self._figures_bytes_observed or None if _diag_turn == 0 else None,
                 tools=tool_schemas or None,
             )
             if not raw_diag:
@@ -554,7 +554,7 @@ class ParameterAgent:
         if self._log_dir is not None and self._sample_order is not None:
             sample_dir = os.path.join(
                 "workspace", self._problem_name,
-                self._log_dir, f"sample_{self._sample_order}",
+                "logs", os.path.basename(self._log_dir), f"sample_{self._sample_order}",
             )
             try:
                 filesystem_schemas = prompt_builder.load_filesystem_schemas(sample_dir)
@@ -615,8 +615,11 @@ class ParameterAgent:
             sample_order=sample_order,
             backend="gpu" if self._use_gpu else "cpu",
         )
+        self._last_invalid_score_details = None
         if log_likelihood is None or details is None:
             return None, None, None
+        if not np.isfinite(log_likelihood):
+            self._last_invalid_score_details = details
         log_sl_data = build_log_sl_json_data(
             log_likelihood, details, s_obs, stat_names, biomarker_names
         )
@@ -629,13 +632,25 @@ class ParameterAgent:
         try:
             from agentode.ode import initial_condition_utils, ode_simulator
 
-            means, _ = param_utils.param_distributions_to_arrays(params)
+            if self._last_invalid_score_details is not None:
+                report_text = self._last_invalid_score_details.get("violation_report_text")
+                report_dict = self._last_invalid_score_details.get("violation_report")
+                if report_text is not None and report_dict is not None:
+                    return str(report_text), report_dict
+
             ic_config = initial_condition_utils.load_ic_config(self._problem_name)
+            n_patients = int(ic_config.get("sample_size", 100))
+            param_sets = param_utils.sample_params_from_distributions(
+                params,
+                n_samples=n_patients,
+                random_seed=ic_config.get("random_seed", None),
+                distribution="lognormal",
+            )
             trajectories, _t, _ic = ode_simulator.simulate_from_config(
                 system_func=self._system_func,
-                params=means,
+                params=param_sets,
                 config=ic_config,
-                sample_size=None,
+                sample_size=n_patients,
                 random_seed=ic_config.get("random_seed", None),
             )
             text_report = violation_check.get_unplausible_trajectory_report(
@@ -842,10 +857,21 @@ class ParameterAgent:
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[str]:
         provider = getattr(self._config, "api_provider", "openai")
-        if str(provider).lower() == "deepseek":
+        provider_name = str(provider).lower()
+        extra_headers: Dict[str, str] = {}
+        if provider_name == "deepseek":
             # DeepSeek's OpenAI-compatible endpoint lives under /v1.
             host, path = "api.deepseek.com", "/v1/chat/completions"
             api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("API_KEY")
+        elif provider_name == "openrouter":
+            base_host = os.environ.get("OPENROUTER_HOST", "openrouter.ai")
+            base_path = os.environ.get("OPENROUTER_PATH", "/api/v1/chat/completions")
+            host, path = base_host, base_path
+            api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("API_KEY")
+            extra_headers = {
+                "HTTP-Referer": os.environ.get("OPENROUTER_SITE_URL", "https://localhost"),
+                "X-Title": os.environ.get("OPENROUTER_APP_NAME", "AgentODE"),
+            }
         else:
             host, path = "api.openai.com", "/v1/chat/completions"
             api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
@@ -857,12 +883,13 @@ class ParameterAgent:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        headers.update(extra_headers)
 
         # Build content for the chat API.
         # For most providers we use OpenAI-style multimodal blocks; DeepSeek's
         # current API, however, rejects "image_url" variants and only accepts
         # plain text, so we drop images in that case.
-        if str(provider).lower() == "deepseek":
+        if provider_name == "deepseek":
             content: Any = prompt  # send plain text only
         else:
             content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
@@ -992,12 +1019,11 @@ class ParameterAgent:
     # ------------------------------------------------------------------
 
     def _ensure_best_synthetic_cache(self, params: Dict[str, Any]) -> None:
-        """Generate and cache valid synthetic trajectories and comparison figures."""
+        """Generate and cache valid synthetic trajectories for diagnosis tools."""
         if self._cached_best_params is not None and self._cached_best_params == params:
             return
 
         from agentode.ode import initial_condition_utils, ode_simulator
-        import pandas as pd
 
         ic_config = initial_condition_utils.load_ic_config(self._problem_name)
 
@@ -1020,38 +1046,7 @@ class ParameterAgent:
             check_nans=True,
         )
 
-        # Build long-format synthetic DataFrame with columns id, t, biomarkers.
-        biomarker_names: List[str] = initial_condition_utils.get_biomarker_order(ic_config)
-        records: List[Dict[str, Any]] = []
-        n_valid, n_time, _ = trajectories.shape
-        for pid in range(n_valid):
-            for t_idx in range(n_time):
-                row: Dict[str, Any] = {
-                    "id": int(pid),
-                    "t": float(time_grid[t_idx]),
-                }
-                for j, name in enumerate(biomarker_names):
-                    row[name] = float(trajectories[pid, t_idx, j])
-                records.append(row)
-
-        synth_df = pd.DataFrame(records)
-
-        # Generate comparison figures (PNG bytes) from observed vs synthetic.
-        # Use the configured trajectory_bin_width for time binning so that
-        # comparison plots respect CLI / config overrides.
-        figures_bytes = _figures.generate_observed_vs_synthetic_figures(
-            problem_name=self._problem_name,
-            synthetic_df=synth_df,
-            bin_width=getattr(self._config, "trajectory_bin_width", None),
-        )
-
-        # Simple textual description for the prompt placeholder.
-        fig_keys = sorted(figures_bytes.keys())
-        figures_text = "\n".join(fig_keys)
-
         self._cached_best_params = params
         self._cached_synthetic = trajectories
         self._cached_time_grid = time_grid
         self._cached_ic_config = ic_config
-        self._cached_figures_bytes = figures_bytes
-        self._cached_figures_text = figures_text

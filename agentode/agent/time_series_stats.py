@@ -52,7 +52,10 @@ _CATEGORY: Dict[str, str] = {
     "iqr":                "distribution",
     "skewness":           "distribution",
     "outlier_frac":       "distribution",
+    "value_range":        "distribution",
     "acf_lag1":           "autocorrelation",
+    "acf_lag2":           "autocorrelation",
+    "acf_lag3":           "autocorrelation",
     "acf_first_zero":     "autocorrelation",
     "dominant_freq":      "autocorrelation",
     "spectral_entropy":   "autocorrelation",
@@ -70,6 +73,7 @@ _CATEGORY: Dict[str, str] = {
     "mean_abs_diff":      "volatility",
     "level_corr":         "cross_variable",
     "diff_corr":          "cross_variable",
+    "ccf_lag1":           "cross_variable",
 }
 
 
@@ -182,6 +186,7 @@ _PRECISION: Dict[str, int] = {
     "within_trajectory_variance": 3,
     "within_trajectory_skewness": 3,
     "acf_lag1": 4,
+    "acf_lag2": 4,
     "acf_lag3": 4,
     "acf_1e_timescale": 2,
     "dominant_freq_normalized": 6,
@@ -200,6 +205,7 @@ _PRECISION: Dict[str, int] = {
     "iqr": 3,
     "skewness": 3,
     "outlier_frac": 4,
+    "value_range": 3,
     "acf_first_zero": 2,
     "dominant_freq": 6,
     "spectral_entropy": 4,
@@ -214,6 +220,7 @@ _PRECISION: Dict[str, int] = {
     "mean_abs_diff": 3,
     "level_corr": 4,
     "diff_corr": 4,
+    "ccf_lag1": 4,
 }
 _DEFAULT_PRECISION = 4
 
@@ -297,9 +304,12 @@ def collect_per_trajectory_stats(
             per_var[var].setdefault("iqr", []).append(float(tsf.iqr(x)))
             per_var[var].setdefault("skewness", []).append(float(tsf.skewness(x)))
             per_var[var].setdefault("outlier_frac", []).append(float(tsf.outlier_frac(x)))
+            per_var[var].setdefault("value_range", []).append(float(tsf.value_range(x)))
 
             # Autocorrelation
             per_var[var].setdefault("acf_lag1", []).append(float(tsf.acf_lag1(x)))
+            per_var[var].setdefault("acf_lag2", []).append(float(tsf.acf_lag2(x)))
+            per_var[var].setdefault("acf_lag3", []).append(float(tsf.acf_lag3(x)))
             per_var[var].setdefault("acf_first_zero", []).append(float(tsf.acf_first_zero(x)))
             per_var[var].setdefault("dominant_freq", []).append(float(tsf.dominant_freq(x)))
             per_var[var].setdefault("spectral_entropy", []).append(float(tsf.spectral_entropy(x)))
@@ -341,7 +351,7 @@ def collect_per_trajectory_stats(
             for j in range(i + 1, n_bio):
                 b1, b2 = lab_vars[i], lab_vars[j]
                 pair = f"{b1}__{b2}"
-                cross[pair] = {"level_corr": [], "diff_corr": []}
+                cross[pair] = {"level_corr": [], "diff_corr": [], "ccf_lag1": []}
                 for _, group in grouped:
                     group = group.sort_values(time_col)
                     sub = group[[b1, b2]].dropna()
@@ -353,6 +363,7 @@ def collect_per_trajectory_stats(
                     # First-difference correlation
                     if v1.size >= 2:
                         cross[pair]["diff_corr"].append(float(tsf.diff_corr(v1, v2)))
+                        cross[pair]["ccf_lag1"].append(float(tsf.ccf_lag1(v1, v2)))
 
     return per_var, cross
 
@@ -406,7 +417,7 @@ def compute_population_stats_from_df(
     # Cross-variable stats
     for pair in sorted(cross):
         stats_dict = cross[pair]
-        for stat in ("level_corr", "diff_corr"):
+        for stat in ("level_corr", "diff_corr", "ccf_lag1"):
             values = stats_dict.get(stat, [])
             obs_val = _nanmean(values)
             iqr_val = _iqr(values)
@@ -444,8 +455,13 @@ def save_observed_stats(
     agg: str = "mean",
     ar_order: int = 3,
     min_patients: int = 3,
+    split: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Compute and save observed dataset statistics to CSV and JSON.
+
+    Args:
+        split: Optional split identifier (e.g. "train" or "test"). When provided,
+            output files are named ``ts_stats_<split>.csv`` / ``ts_stats_<split>.json``.
 
     Returns the CSV and JSON file paths.
     """
@@ -463,8 +479,9 @@ def save_observed_stats(
         min_patients=min_patients,
     )
 
-    csv_path = os.path.join(out_dir, "ts_stats.csv")
-    json_path = os.path.join(out_dir, "ts_stats.json")
+    stem = f"ts_stats_{split}" if split else "ts_stats"
+    csv_path = os.path.join(out_dir, f"{stem}.csv")
+    json_path = os.path.join(out_dir, f"{stem}.json")
 
     stats_df.to_csv(csv_path, index=False, na_rep="NaN")
     stats_df.to_json(json_path, orient="records")

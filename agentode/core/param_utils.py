@@ -231,8 +231,173 @@ def get_default_param_distributions(problem_name: str) -> Dict[str, Any] | None:
                 "rationale": "Small growth rate prior so template exponential trajectories stay within valid range [0,200] over t=[0,50].",
             },
         }
-
-
+    elif problem_name == 'cdima':
+        # return {
+        #     "0": {
+        #         "mean": 4.0,
+        #         "sd": 0.00000000000001,
+        #         "rationale": "Initial generic prior from the template (parameter 0).",
+        #     },
+        #     "1": {
+        #         "mean": 8.9,
+        #         "sd": 0.00000000000001,
+        #         "rationale": "Initial generic prior from the template (parameter 1).",
+        #     },
+        #     "2": {
+        #         "mean": 0.3,
+        #         "sd": 0.00000000000001,
+        #         "rationale": "Initial generic prior from the template (parameter 1).",
+        #     },
+        # }
+        return {
+            "0": {
+                "mean": 0.5,
+                "sd": 0.0000005,
+                "rationale": "Initial generic prior from the dosc template (parameter 0).",
+            },
+            "1": {
+                "mean": 0.5,
+                "sd": 0.0000005,
+                "rationale": "Initial generic prior from the dosc template (parameter 1).",
+            },
+        }
+    # elif problem_name == 'apop':
+    #     return {
+    #         "0": {
+    #             "mean": 0.01,
+    #             "sd": 0.005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 0).",
+    #         },
+    #         "1": {
+    #             "mean": 0.01,
+    #             "sd": 0.005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 1).",
+    #         },
+    #         "2": {
+    #             "mean": 0.01,
+    #             "sd": 0.005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 2).",
+    #         },
+    #         "3": {
+    #             "mean": 0.01,
+    #             "sd": 0.005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 3).",
+    #         },
+    #         "4": {
+    #             "mean": 0.01,
+    #             "sd": 0.005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 4).",
+    #         },
+    #         "5": {
+    #             "mean": 0.01,
+    #             "sd": 0.005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 5).",
+    #         },
+    #         "6": {
+    #             "mean": 0.01,
+    #             "sd": 0.005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 6).",
+    #         },
+    #         "7": {
+    #             "mean": 0.01,
+    #             "sd": 0.005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 7).",
+    #         },
+    #         "8": {
+    #             "mean": 0.01,
+    #             "sd": 0.005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 8).",
+    #         },
+    #     }
+    elif problem_name == 'polymer':
+        return {
+            "0": {
+                "mean": 0.05,
+                "sd": 0.00000005,
+                "rationale": "Initial generic prior from the dosc template (parameter 0).",
+            },
+            "1": {
+                "mean": 0.05,
+                "sd": 0.00000005,
+                "rationale": "Initial generic prior from the dosc template (parameter 1).",
+            },
+            "2": {
+                "mean": 0.05,
+                "sd": 0.00000005,
+                "rationale": "Initial generic prior from the dosc template (parameter 2).",
+            },
+            "3": {
+                "mean": 0.05,
+                "sd": 0.00000005,
+                "rationale": "Initial generic prior from the dosc template (parameter 3).",
+            },
+        }
+    # elif problem_name == 'bsbmo':
+    #     return {
+    #         "0": {
+    #             "mean": 0.3426,
+    #             "sd": 0.00000005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 0).",
+    #         },
+    #         "1": {
+    #             "mean": 30.0,
+    #             "sd": 0.00000005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 1).",
+    #         },
+    #         "2": {
+    #             "mean": 5.3,
+    #             "sd": 0.00000005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 2).",
+    #         },
+    #         "3": {
+    #             "mean": 2.0,
+    #             "sd": 0.00000005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 3).",
+    #         },
+    #         "4": {
+    #             "mean": 4.0,
+    #             "sd": 0.00000005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 4).",
+    #         },
+    #         "5": {
+    #             "mean": 2.3,
+    #             "sd": 0.00000005,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 5).",
+    #         },
+    #     }
+    # elif problem_name == 'rm':
+    #     return {
+    #         "0": {
+    #             "mean": 0.9,
+    #             "sd": 0.15,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 0).",
+    #         },
+    #         "1": {
+    #             "mean": 100.0,
+    #             "sd": 15.0,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 1).",
+    #         },
+    #         "2": {
+    #             "mean": 0.1,
+    #             "sd": 0.015,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 2).",
+    #         },
+    #         "3": {
+    #             "mean": 0.1,
+    #             "sd": 0.015,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 3).",
+    #         },
+    #         "4": {
+    #             "mean": 0.135,
+    #             "sd": 0.02,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 4).",
+    #         },
+    #         "5": {
+    #             "mean": 0.3,
+    #             "sd": 0.045,
+    #             "rationale": "Initial generic prior from the dosc template (parameter 5).",
+    #         },
+    #     }
     return None
 
 

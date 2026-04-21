@@ -1,0 +1,69 @@
+"""
+Find the symbolic skeleton of an ODE system that represents a
+four-variable reversible chemical reaction network exhibiting
+monotonic convergence to equilibrium.
+
+The system involves four coupled state variables:
+
+    - x0 (concentration): A reactant species present at high
+      initial concentration that is consumed through two
+      separate bimolecular reactions.
+
+    - x1 (concentration): An intermediate species present at
+      very low initial concentration that is produced and
+      consumed through bimolecular interactions with x0.
+
+    - x2 (concentration): A product species that accumulates
+      through a bimolecular reaction between x0 and x1 and
+      can dissociate back.
+
+    - x3 (concentration): A secondary species present at
+      moderate initial concentration that reacts with x0
+      and is regenerated through x1.
+
+The time unit is dimensionless. Observations span t in [0, 50.0]
+with 101 timepoints (dt = 0.5).
+
+HARD CONSTRAINT:
+- The parameter array has at most MAX_NPARAMS = 6 slots.
+- Do NOT skip indices.
+- Use only as many parameters as necessary; avoid introducing
+  redundant parameters.
+- You must not use any params[k] with k >= MAX_NPARAMS.
+"""
+
+import numpy as np
+
+# Initialize parameters
+MAX_NPARAMS = 6
+params = [1.0] * MAX_NPARAMS
+
+
+@system.evolve
+def system(biomarkers: np.ndarray, params: np.ndarray) -> np.ndarray:
+    """Symbolic skeleton for a 4-variable ODE system.
+
+    Args:
+        biomarkers: A numpy array containing [x0, x1, x2, x3].
+        params: Array of numeric constants or parameters to be optimized.
+                You must not use any params[k] with k >= MAX_NPARAMS.
+    Returns:
+        A numpy array representing the temporal derivatives (d/dt)
+        of the state variables [dx0/dt, dx1/dt, dx2/dt, dx3/dt].
+    """
+    x0, x1, x2, x3 = biomarkers
+
+    # ---- x0 dynamics ----
+    dx0 = params[0] * x0 
+
+    # ---- x1 dynamics ----
+    dx1 = params[1] * x1
+
+    # ---- x2 dynamics ----
+    dx2 = params[2] * x2
+
+    # ---- x3 dynamics ----
+    dx3 = params[3] * x3
+
+    d_biomarkers = np.array([dx0, dx1, dx2, dx3], dtype=float)
+    return d_biomarkers

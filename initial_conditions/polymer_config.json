@@ -1,0 +1,78 @@
+{
+    "problem_name": "pkpd_immune",
+    "biomarkers": {
+      "x0": {
+        "distribution": "lognormal",
+        "mean": 5.0,
+        "std": 1.0,
+        "clip_min": 2.0,
+        "clip_max": 10.0,
+        "physiological_range": {
+          "normal_min": 0.0,
+          "normal_max": 10.0,
+          "critical_min": 0.0,
+          "critical_max": 10.0
+        },
+        "description": "Drug depot amount at dose time"
+      },
+      "x1": {
+        "distribution": "fixed",
+        "value": 0.0,
+        "physiological_range": {
+          "normal_min": 0.0,
+          "normal_max": 6.0,
+          "critical_min": 0.0,
+          "critical_max": 6.0
+        },
+        "description": "Drug central compartment — starts at 0, peaks ~3-4 around day 1-2, returns to 0"
+      },
+      "x2": {
+        "distribution": "lognormal",
+        "mean": 6.67,
+        "std": 1.5,
+        "clip_min": 2.0,
+        "clip_max": 15.0,
+        "physiological_range": {
+          "normal_min": 0.0,
+          "normal_max": 15.0,
+          "critical_min": 0.0,
+          "critical_max": 15.0
+        },
+        "description": "Immune cell baseline (~x2* = s/d = 6.67)"
+      },
+      "x3": {
+        "distribution": "lognormal",
+        "mean": 1.0,
+        "std": 0.30,
+        "clip_min": 0.1,
+        "clip_max": 5.0,
+        "physiological_range": {
+          "normal_min": 0.0,
+          "normal_max": 5.0,
+          "critical_min": 0.0,
+          "critical_max": 5.0
+        },
+        "description": "Effector cell baseline (below drug-free SS x3* ≈ 2.15)"
+      }
+    },
+    "simulation_params": {
+      "time_span": [0, 50.0],
+      "time_unit": "days",
+      "time_points": 101,
+      "trajectory_bin_width": 0.5
+    },
+    "negative": false,
+    "correlation_matrix": [
+      [1, 0, 0, 0],
+      [0, 1, 0, 0],
+      [0, 0, 1, 0],
+      [0, 0, 0, 1]
+    ],
+    "notes": {
+      "fixed_structural_param": "eps=0.05 (effector intraspecific competition, stabilises x3)",
+      "drug_free_ss": "x2*=6.67, x3*=2.15 (mean parameters)",
+      "x1_note": "x1 is always fixed at 0 — central compartment empty at dose time",
+      "x2_note": "IC mean set to x2*=s/d=6.67 so individuals start near immune equilibrium",
+      "x3_note": "IC mean set below x3*=2.15 so effectors rise toward SS during simulation"
+    }
+  }

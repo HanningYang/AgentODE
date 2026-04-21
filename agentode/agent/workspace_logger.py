@@ -2,7 +2,7 @@
 
 Directory layout::
 
-    workspace/<problem_name>/<log_dir>/sample_<N>/iter_<N>/<files>
+    workspace/<problem_name>/logs/<basename(log_dir)>/sample_<N>/iter_<N>/<files>
 
 Each iteration produces a ``params.json`` plus type-specific files:
 
@@ -59,7 +59,8 @@ class WorkspaceLogger:
         self._sample_dir = os.path.join(
             "workspace",
             problem_name,
-            log_dir,
+            "logs",
+            os.path.basename(log_dir),
             f"sample_{sample_order}",
         )
         os.makedirs(self._sample_dir, exist_ok=True)

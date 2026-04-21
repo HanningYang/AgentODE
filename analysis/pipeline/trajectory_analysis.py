@@ -2,9 +2,12 @@
 
 Usage:
     python -m analysis.pipeline.trajectory_analysis \
-        --data data/aki/aki.csv \
         --problem_name aki \
         --bin_width 24
+
+Data is resolved automatically:
+    data/<problem_name>/<problem_name>_train.csv  (preferred if it exists)
+    data/<problem_name>/<problem_name>.csv        (fallback)
 """
 
 import argparse
@@ -31,7 +34,8 @@ def parse_args() -> argparse.Namespace:
         "--data",
         default=None,
         help="Path to CSV with columns: id, t, variables. "
-        "Defaults to data/<problem_name>/<problem_name>.csv.",
+        "Defaults to data/<problem_name>/<problem_name>_train.csv if it exists, "
+        "otherwise data/<problem_name>/<problem_name>.csv.",
     )
     parser.add_argument(
         "--problem_name",
@@ -204,7 +208,14 @@ def main() -> None:
     )
     os.makedirs(out_dir, exist_ok=True)
 
-    df = pd.read_csv(args.data)
+    if args.data is not None:
+        data_path = args.data
+    else:
+        _train = os.path.join("data", args.problem_name, f"{args.problem_name}_train.csv")
+        _default = os.path.join("data", args.problem_name, f"{args.problem_name}.csv")
+        data_path = _train if os.path.exists(_train) else _default
+    print(f"Data      : {data_path}")
+    df = pd.read_csv(data_path)
     df.columns = df.columns.str.strip().str.lower()
 
     id_col = args.id_col.strip().lower()
@@ -232,6 +243,7 @@ def main() -> None:
     print(f"Rows      : {len(df):,}")
     print(f"Variables : {vars_list}")
 
+    t_max = df["t"].max()
     df_b = bin_trajectories(df, bin_width=float(args.bin_width))
 
     # Fig 1: mean ± 95% CI
@@ -263,6 +275,7 @@ def main() -> None:
             alpha=0.15,
             label="95% CI",
         )
+        ax.set_xlim(0, t_max)
         ax.set_xlabel("Time", fontsize=11)
         ax.set_title(v.replace("_", " ").capitalize(), fontsize=11)
         ax.grid(True, alpha=0.3)
@@ -334,6 +347,7 @@ def main() -> None:
                 color="gray",
             )
 
+            ax.set_xlim(0, t_max)
             if row == 0:
                 ax.set_title(q_labels[qi], fontsize=10)
             if row == n_vars - 1:

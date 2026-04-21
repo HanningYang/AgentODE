@@ -60,6 +60,14 @@ def _get_openwebui_client(config: config_lib.Config) -> _OpenAIClient:
     )
 
 
+def _get_openrouter_client() -> _OpenAIClient:
+    """Return an OpenAI-compatible client pointed at OpenRouter."""
+    return _OpenAIClient(
+        base_url=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+        api_key=os.environ.get("OPENROUTER_API_KEY") or os.environ.get("API_KEY"),
+    )
+
+
 class LLM(ABC):
     def __init__(self, samples_per_prompt: int) -> None:
         self._samples_per_prompt = samples_per_prompt
@@ -290,13 +298,26 @@ class LocalLLM(LLM):
         # Prefer structure-specific model if provided; otherwise api_model.
         model_name = getattr(config, "structure_model", None) or getattr(config, "api_model", None)
 
+        provider = str(getattr(config, "api_provider", "openai")).lower()
+        api_max_tokens = int(getattr(config, "api_max_tokens", 8192))
         all_samples = []
         for _ in range(self._samples_per_prompt):
-            response = _ai_client.chat.completions.create(
-                model=model_name,  # e.g. "openai:gpt-4o"
-                messages=[{"role": "user", "content": full_prompt}],
-                # max_tokens=8192,  # uncomment to cap response length and avoid overly long outputs
-            )
+            if provider == "openrouter":
+                response = _get_openrouter_client().chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": full_prompt}],
+                    max_tokens=api_max_tokens,
+                    extra_headers={
+                        "HTTP-Referer": os.environ.get("OPENROUTER_SITE_URL", "https://localhost"),
+                        "X-Title": os.environ.get("OPENROUTER_APP_NAME", "AgentODE"),
+                    },
+                )
+            else:
+                response = _ai_client.chat.completions.create(
+                    model=model_name,  # e.g. "openai:gpt-4o"
+                    messages=[{"role": "user", "content": full_prompt}],
+                    max_tokens=api_max_tokens,
+                )
             content = response.choices[0].message.content
 
             if DEBUG_PRINTS:
@@ -326,12 +347,13 @@ class LocalLLM(LLM):
         model_name = getattr(config, "structure_model", None) or getattr(config, "api_model", None)
 
         all_samples = []
+        api_max_tokens = int(getattr(config, "api_max_tokens", 8192))
 
         for _ in range(self._samples_per_prompt):
             response = client.chat.completions.create(
                 model=model_name,  # e.g. "openai/gpt-5.2-llmlb"
                 messages=[{"role": "user", "content": full_prompt}],
-                # max_tokens=8192,  # uncomment to cap response length and avoid overly long outputs
+                max_tokens=api_max_tokens,
             )
             content = response.choices[0].message.content
 

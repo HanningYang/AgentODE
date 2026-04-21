@@ -1,0 +1,82 @@
+"""
+Find the symbolic skeleton of an ODE system that represents
+inflammatory biomarker dynamics in patients with Recessive
+Dystrophic Epidermolysis Bullosa (RDEB), a rare genetic
+blistering skin disorder characterised by chronic wounds,
+systemic inflammation, anaemia, and nutritional compromise.
+
+The system involves five coupled state variables measured
+longitudinally over time in paediatric and young adult RDEB
+patients:
+
+    - crp (mg/L):       C-reactive protein
+    - hemoglobin (g/dL): Haemoglobin
+    - bmi (kg/m^2):     Body mass index
+    - albumin (g/dL):   Serum albumin
+    - ferritin (ng/mL): Serum ferritin
+
+The time unit is age in years. Observations span t in [0, 12.0]
+with 41 timepoints (dt = 0.3 years).
+
+CLINICAL CONTEXT:
+- The population contains two disease severity subgroups:
+  intermediate and severe RDEB.
+- All biomarkers are strictly non-negative.
+- Dynamics are slow and smooth — clinically meaningful
+  changes occur over months to years.
+
+
+HARD CONSTRAINT:
+- The parameter array has at most MAX_NPARAMS = 12 slots.
+- Do NOT skip indices.
+- Use only as many parameters as necessary; avoid introducing
+  redundant parameters.
+- You must not use any params[k] with k >= MAX_NPARAMS.
+"""
+
+import numpy as np
+
+# Initialize parameters
+MAX_NPARAMS = 12
+params = [1.0] * MAX_NPARAMS
+
+
+@system.evolve
+def system(biomarkers: np.ndarray, params: np.ndarray) -> np.ndarray:
+    """Symbolic skeleton for a 5-variable ODE system.
+
+    Args:
+        biomarkers: A numpy array containing
+                    [crp, hemoglobin, bmi, albumin, ferritin].
+        params: Array of numeric constants or parameters to be optimized.
+                You must not use any params[k] with k >= MAX_NPARAMS.
+    Returns:
+        A numpy array representing the temporal derivatives (d/dt)
+        of the state variables [d_crp/dt, d_hemoglobin/dt, d_bmi/dt,
+        d_albumin/dt, d_ferritin/dt].
+    """
+    crp        = biomarkers[0]
+    hemoglobin = biomarkers[1]
+    bmi        = biomarkers[2]
+    albumin    = biomarkers[3]
+    ferritin   = biomarkers[4]
+
+    # ---- crp dynamics ----
+    d_crp = params[0] * crp
+
+    # ---- hemoglobin dynamics ----
+    d_hemoglobin = params[1] * hemoglobin
+
+    # ---- bmi dynamics ----
+    d_bmi = params[2] * bmi
+
+    # ---- albumin dynamics ----
+    d_albumin = params[3] * albumin
+
+    # ---- ferritin dynamics ----
+    d_ferritin = params[4] * ferritin
+
+    d_biomarkers = np.array([
+        d_crp, d_hemoglobin, d_bmi, d_albumin, d_ferritin
+    ], dtype=float)
+    return d_biomarkers

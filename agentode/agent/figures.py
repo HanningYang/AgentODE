@@ -1,7 +1,8 @@
 """Observed vs synthetic trajectory comparison figures returned as PNG bytes.
 
-Auto-loads observed data from `data/<problem_name>/<problem_name>.csv`.
-Returns: {"mean_trajectory", "umap" (optional), "faceted_by_baseline", "diff_corr_heatmap"}.
+Auto-loads observed data from the train split when available, otherwise from
+the unsplit dataset. Returns: {"mean_trajectory", "umap" (optional),
+"faceted_by_baseline", "diff_corr_heatmap"}.
 """
 
 from __future__ import annotations
@@ -20,6 +21,17 @@ from agentode.config import Config
 from agentode.ode import initial_condition_utils
 
 _DEFAULT_CONFIG = Config()
+
+
+def _resolve_observed_csv_path(problem_name: str) -> str:
+    """Return split-aware observed CSV path for diagnosis/inference.
+
+    Prefers ``data/<problem>/<problem>_train.csv`` when it exists, falling
+    back to ``data/<problem>/<problem>.csv`` for problems without a split.
+    """
+    train_path = os.path.join("data", problem_name, f"{problem_name}_train.csv")
+    default_path = os.path.join("data", problem_name, f"{problem_name}.csv")
+    return train_path if os.path.exists(train_path) else default_path
 
 
 def _resolve_bin_width(bin_width: Optional[float], problem_name: Optional[str] = None) -> float:
@@ -235,8 +247,8 @@ def generate_observed_vs_synthetic_figures(
     """Generate four comparison figures (PNG bytes) for a problem.
 
     Args:
-        problem_name: Name of the problem, used to load observed data from
-            `data/<problem_name>/<problem_name>.csv`.
+        problem_name: Name of the problem, used to load observed data from the
+            train split when available, otherwise from the unsplit CSV.
         synthetic_df: Long-format synthetic data with columns `id`, `t`, and
             one or more numeric biomarker columns.
         vars: Optional iterable of biomarker columns to analyse. If None,
@@ -254,7 +266,7 @@ def generate_observed_vs_synthetic_figures(
     bin_width = _resolve_bin_width(bin_width, problem_name)
 
     # Load observed data
-    obs_path = os.path.join("data", problem_name, f"{problem_name}.csv")
+    obs_path = _resolve_observed_csv_path(problem_name)
     obs_df = pd.read_csv(obs_path)
 
     # Normalise column names
@@ -519,8 +531,8 @@ def plot_distribution_boxplot_comparison(
     Solid lines connect the medians across bins.
 
     Args:
-        problem_name: Used to load observed data from
-            ``data/<problem_name>/<problem_name>.csv``.
+        problem_name: Used to load observed data from the train split when
+            available, otherwise from the unsplit CSV.
         synthetic_df: Long-format synthetic data with columns ``id``, ``t``, and
             at least the column named by *var*.
         var: Biomarker column to visualise (must exist in both datasets after
@@ -542,7 +554,7 @@ def plot_distribution_boxplot_comparison(
     bin_width = _resolve_bin_width(bin_width, problem_name)
 
     # ── Load & normalise ──────────────────────────────────────────────────────
-    obs_path = os.path.join("data", problem_name, f"{problem_name}.csv")
+    obs_path = _resolve_observed_csv_path(problem_name)
     obs = _normalize_columns(pd.read_csv(obs_path))
     synth = _normalize_columns(synthetic_df)
     var = var.strip().lower()

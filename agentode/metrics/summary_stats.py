@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Tuple
 
+import os
+
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
@@ -351,7 +353,8 @@ def get_observed_summary(problem_name: str, standardization: bool = True) -> Dic
     all_biomarker_names = initial_condition_utils.get_biomarker_order(config)
     t_eval = initial_condition_utils.get_time_grid(config)
 
-    observed_data_path = f"data/{problem_name}/{problem_name}.csv"
+    train_path = f"data/{problem_name}/{problem_name}_train.csv"
+    observed_data_path = train_path if os.path.exists(train_path) else f"data/{problem_name}/{problem_name}.csv"
     observed_df = pd.read_csv(observed_data_path)
 
     std_params = compute_standardization_params(observed_df, biomarker_names)

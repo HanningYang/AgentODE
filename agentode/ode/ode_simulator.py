@@ -15,6 +15,16 @@ _NUMERICAL_WARNING_PRINTED = False
 _TORCH_DEVICE_LOGGED = False
 
 
+def _cuda_available() -> bool:
+    """Return whether CUDA is available for torch-based RK4 execution."""
+    return bool(torch.cuda.is_available())
+
+
+def _should_use_torch_solver(system_func: Callable) -> bool:
+    """Use torch RK4 for torch-backed systems (CPU or CUDA)."""
+    return bool(getattr(system_func, "_torch_backend", False))
+
+
 def _silence_odeint_output():
     """Redirect fd 1/2 to devnull to suppress LSODA's C-level stdout/stderr."""
 
@@ -301,9 +311,8 @@ def simulate_from_config(
         random_seed=random_seed,
     )
     time_grid = initial_condition_utils.get_time_grid(config)
-    # Respect torch vs NumPy backend in the same way as `simulate_valid_from_config`.
-    use_torch_backend = bool(getattr(system_func, "_torch_backend", False))
-    if use_torch_backend:
+    # Use torch RK4 only on CUDA; otherwise fall back to SciPy odeint on CPU.
+    if _should_use_torch_solver(system_func):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         traj_t = simulate_ode_system_torch(
             system_func=system_func,
@@ -338,8 +347,7 @@ def simulate_valid_from_config(
     )
     time_grid = initial_condition_utils.get_time_grid(config)
 
-    use_torch_backend = bool(getattr(system_func, "_torch_backend", False))
-    if use_torch_backend:
+    if _should_use_torch_solver(system_func):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         traj_t = simulate_ode_system_torch(
             system_func=system_func,

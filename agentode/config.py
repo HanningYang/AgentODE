@@ -52,7 +52,7 @@ class Config:
         evaluate_timeout_seconds (int): Hypothesis evaluation timeout
 
         structure_backend (str): Backend for ODE structure inference. One of:
-            'api'       — direct cloud API via aisuite
+            'api'       — direct cloud API via aisuite or OpenAI-compatible endpoints
             'openwebui' — local LLM served via OpenWebUI
             'local'     — local LLM server running on port 5000 (default)
 
@@ -71,6 +71,10 @@ class Config:
         openwebui_base_url (str): Base URL for OpenWebUI API.
             Defaults to https://openwebui.uni-freiburg.de/api
             Can be overridden with OPENWEBUI_URL env var.
+
+        api_max_tokens (int): Maximum completion tokens requested from
+            OpenAI-compatible chat APIs. Keeping this capped avoids provider
+            defaults that may exceed the available budget on OpenRouter.
 
         use_api (bool): Deprecated — kept only for backwards compatibility
                         in parameter optimisation. New code should prefer
@@ -109,19 +113,20 @@ class Config:
     api_model: str = os.environ.get("API_MODEL", "openai/gpt-5.2-llmlb")
     structure_model: str | None = os.environ.get("STRUCTURE_MODEL", None)
     param_model: str | None = os.environ.get("PARAM_MODEL", None)
+    api_max_tokens: int = int(os.environ.get("API_MAX_TOKENS", "8192"))
     openwebui_base_url: str = os.environ.get(
         "OPENWEBUI_URL", "https://openwebui.uni-freiburg.de/api"
     )
 
     # kept for backwards compatibility
     use_api: bool = False
-    api_provider: str = "openai"
+    api_provider: str = os.environ.get("API_PROVIDER", "openai")
 
     # --- Parameter optimisation ---
-    param_optim_steps: int = 30
-    param_optim_patience: int = 10
+    param_optim_steps: int = 20
+    param_optim_patience: int = 20
     param_optim_rel_improvement: float = 0.1
-    param_optim_extended_steps: int = 40
+    param_optim_extended_steps: int = 20
 
     trajectory_bin_width: float = 14.0
 

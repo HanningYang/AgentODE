@@ -87,8 +87,59 @@
   {
     "type": "function",
     "function": {
+      "name": "value_range",
+      "description": "Compute the range (max - min) of a time-ordered series for a specified variable, computed per trajectory then averaged across trajectories.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "variable": {
+            "type": "string",
+            "description": "The variable to compute the statistic for. Must be one of: {variable_names}."
+          }
+        },
+        "required": ["variable"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "acf_lag1",
       "description": "Compute lag-1 autocorrelation coefficient of a time series for a specified variable.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "variable": {
+            "type": "string",
+            "description": "The variable to compute the statistic for. Must be one of: {variable_names}."
+          }
+        },
+        "required": ["variable"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "acf_lag2",
+      "description": "Compute lag-2 autocorrelation coefficient of a time series for a specified variable.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "variable": {
+            "type": "string",
+            "description": "The variable to compute the statistic for. Must be one of: {variable_names}."
+          }
+        },
+        "required": ["variable"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "acf_lag3",
+      "description": "Compute lag-3 autocorrelation coefficient of a time series for a specified variable.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -353,6 +404,27 @@
           }
         },
         "required": ["variable"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ccf_lag1",
+      "description": "Compute Spearman cross-correlation at lag 1 between two variables: corr(x[t], y[t+1]). Measures how strongly x at time t predicts y one step ahead.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "variable_x": {
+            "type": "string",
+            "description": "The leading variable (x[t]). Must be one of: {variable_names}."
+          },
+          "variable_y": {
+            "type": "string",
+            "description": "The lagged variable (y[t+1]), must differ from variable_x. Must be one of: {variable_names}."
+          }
+        },
+        "required": ["variable_x", "variable_y"]
       }
     }
   },

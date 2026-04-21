@@ -175,7 +175,18 @@ def generate_initial_conditions(
         std_vector = []
         biomarker_types = []
 
-        for name in biomarker_names:
+        # Separate fixed biomarkers from stochastic ones.
+        fixed_names = [
+            name for name in biomarker_names
+            if config['biomarkers'][name].get('distribution') == 'fixed'
+        ]
+        stochastic_names = [
+            name for name in biomarker_names
+            if config['biomarkers'][name].get('distribution') != 'fixed'
+        ]
+        stochastic_indices = [biomarker_names.index(n) for n in stochastic_names]
+
+        for name in stochastic_names:
             params = config['biomarkers'][name]
             dist = params.get('distribution', 'normal')
             biomarker_types.append(dist)
@@ -199,56 +210,59 @@ def generate_initial_conditions(
             else:
                 raise ValueError(f"Unsupported distribution type: {dist}")
 
-        mean_vector = np.array(mean_vector, dtype=float)
-        std_vector = np.array(std_vector, dtype=float)
+        # Fill fixed biomarkers directly.
+        for name in fixed_names:
+            biomarkers_dict[name] = np.full(sample_size, config['biomarkers'][name]['value'])
 
-        # Step 2: Approximate correlation in transformed (log) space.
-        corr_transformed = approximate_log_space_correlation(
-            corr_linear,
-            biomarker_types,
-        )
+        if stochastic_names:
+            mean_vector = np.array(mean_vector, dtype=float)
+            std_vector = np.array(std_vector, dtype=float)
 
-        # Step 3: Build covariance matrix in transformed space.
-        cov_matrix = corr_transformed * np.outer(std_vector, std_vector)
+            # Step 2: Sub-matrix of correlation for stochastic biomarkers only.
+            corr_sub = corr_linear[np.ix_(stochastic_indices, stochastic_indices)]
+            corr_transformed = approximate_log_space_correlation(corr_sub, biomarker_types)
 
-        # Step 4: Sample from multivariate normal in transformed space.
-        try:
-            samples_transformed = multivariate_normal.rvs(
-                mean=mean_vector,
-                cov=cov_matrix,
-                size=sample_size,
-            )
-        except np.linalg.LinAlgError as e:
-            raise ValueError(
-                "Covariance matrix is not positive semi-definite; "
-                "cannot sample multivariate normal initial conditions."
-            ) from e
+            # Step 3: Build covariance matrix in transformed space.
+            cov_matrix = corr_transformed * np.outer(std_vector, std_vector)
 
-        if samples_transformed.ndim == 1:
-            samples_transformed = samples_transformed.reshape(1, -1)
+            # Step 4: Sample from multivariate normal in transformed space.
+            try:
+                samples_transformed = multivariate_normal.rvs(
+                    mean=mean_vector,
+                    cov=cov_matrix,
+                    size=sample_size,
+                )
+            except np.linalg.LinAlgError as e:
+                raise ValueError(
+                    "Covariance matrix is not positive semi-definite; "
+                    "cannot sample multivariate normal initial conditions."
+                ) from e
 
-        # Step 5: Transform back to original space.
-        for j, name in enumerate(biomarker_names):
-            params = config['biomarkers'][name]
-            dist = biomarker_types[j]
-            z = samples_transformed[:, j]
+            if samples_transformed.ndim == 1:
+                samples_transformed = samples_transformed.reshape(1, -1)
 
-            if dist == 'lognormal':
-                samples = np.exp(z)
-            elif dist == 'uniform':
-                # Map standard normal to U(0, 1) via CDF, then scale to
-                # [clip_min, clip_max].
-                u = norm.cdf(z)
-                low = params['clip_min']
-                high = params['clip_max']
-                samples = low + u * (high - low)
-            else:  # 'normal'
-                samples = z
+            # Step 5: Transform back to original space.
+            for j, name in enumerate(stochastic_names):
+                params = config['biomarkers'][name]
+                dist = biomarker_types[j]
+                z = samples_transformed[:, j]
 
-            if clip:
-                samples = np.clip(samples, params['clip_min'], params['clip_max'])
+                if dist == 'lognormal':
+                    samples = np.exp(z)
+                elif dist == 'uniform':
+                    # Map standard normal to U(0, 1) via CDF, then scale to
+                    # [clip_min, clip_max].
+                    u = norm.cdf(z)
+                    low = params['clip_min']
+                    high = params['clip_max']
+                    samples = low + u * (high - low)
+                else:  # 'normal'
+                    samples = z
 
-            biomarkers_dict[name] = samples
+                if clip:
+                    samples = np.clip(samples, params['clip_min'], params['clip_max'])
+
+                biomarkers_dict[name] = samples
 
         biomarkers_array = np.column_stack([biomarkers_dict[name] for name in biomarker_names])
         return biomarkers_array, biomarkers_dict
@@ -273,6 +287,9 @@ def generate_initial_conditions(
             low = params.get('low', params['clip_min'])
             high = params.get('high', params['clip_max'])
             samples = np.random.uniform(low=low, high=high, size=sample_size)
+        elif distribution == 'fixed':
+            biomarkers_dict[name] = np.full(sample_size, params['value'])
+            continue
         else:
             raise ValueError(f"Unsupported distribution type: {distribution}")
 
@@ -403,6 +420,8 @@ def validate_config(config: dict) -> Tuple[bool, list]:
                         )
             if dist == 'lognormal' and 'median' not in params:
                 errors.append(f"Biomarker '{name}' uses lognormal but missing 'median'")
+            if dist == 'fixed' and 'value' not in params:
+                errors.append(f"Biomarker '{name}' with distribution 'fixed' missing required parameter: value")
 
     # Check simulation params
     if 'simulation_params' in config:

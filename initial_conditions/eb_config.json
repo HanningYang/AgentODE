@@ -1,0 +1,101 @@
+{
+    "problem_name": "eb",
+    "disease": "Recessive Dystrophic Epidermolysis Bullosa (RDEB)",
+    "description": "Five-variable model of inflammatory biomarker dynamics in RDEB. State variables are CRP (inflammatory marker), hemoglobin, BMI, albumin, and ferritin. CRP and ferritin are sampled from log-normal distributions reflecting their right-skewed clinical distributions; hemoglobin, BMI, and albumin are sampled from uniform distributions.",
+    "biomarkers": {
+      "crp": {
+        "display_name": "C-reactive protein",
+        "unit": "mg/L",
+        "distribution": "lognormal",
+        "mean": 37.95,
+        "median": 16.85,
+        "std": 50.31,
+        "clip_min": 0.0,
+        "clip_max": 200.0,
+        "observed": true,
+        "physiological_range": {
+          "normal_min": 0.0,
+          "normal_max": 200.0,
+          "critical_min": 0.0,
+          "critical_max": 300.0
+        }
+      },
+      "hemoglobin": {
+        "display_name": "hemoglobin",
+        "unit": "g/dL",
+        "distribution": "uniform",
+        "clip_min": 6.0,
+        "clip_max": 14.0,
+        "observed": true,
+        "physiological_range": {
+          "normal_min": 0.0,
+          "normal_max": 20.0,
+          "critical_min": 0.0,
+          "critical_max": 20.0
+        }
+      },
+      "bmi": {
+        "display_name": "body mass index",
+        "unit": "kg/m^2",
+        "distribution": "uniform",
+        "clip_min": 10.0,
+        "clip_max": 20.0,
+        "observed": true,
+        "physiological_range": {
+          "normal_min": 0.0,
+          "normal_max": 30.0,
+          "critical_min": 0.0,
+          "critical_max": 30.0
+        }
+      },
+      "albumin": {
+        "display_name": "serum albumin",
+        "unit": "g/dL",
+        "distribution": "uniform",
+        "clip_min": 1.5,
+        "clip_max": 5.0,
+        "observed": true,
+        "physiological_range": {
+          "normal_min": 0.0,
+          "normal_max": 5.5,
+          "critical_min": 0.0,
+          "critical_max": 5.5
+        }
+      },
+      "ferritin": {
+        "display_name": "serum ferritin",
+        "unit": "ng/mL",
+        "distribution": "lognormal",
+        "mean": 30.57,
+        "median": 22.40,
+        "std": 22.99,
+        "clip_min": 0.0,
+        "clip_max": 200.0,
+        "observed": true,
+        "physiological_range": {
+          "normal_min": 0.0,
+          "normal_max": 200.0,
+          "critical_min": 0.0,
+          "critical_max": 200.0
+        }
+      }
+    },
+    "simulation_params": {
+      "default_sample_size": 100,
+      "time_span": [0, 12.0],
+      "time_unit": "age (years old)",
+      "time_points": 41,
+      "trajectory_bin_width": 0.3,
+      "description": "40 intervals of dt=0.3 years over 12 years"
+    },
+    "negative": false,
+    "correlation_matrix": [
+      [1.000, 0.000, 0.000, 0.000, 0.000],
+      [0.000, 1.000, 0.000, 0.000, 0.000],
+      [0.000, 0.000, 1.000, 0.000, 0.000],
+      [0.000, 0.000, 0.000, 1.000, 0.000],
+      [0.000, 0.000, 0.000, 0.000, 1.000]
+    ],
+    "random_seed": null,
+    "notes": "Recessive Dystrophic Epidermolysis Bullosa (RDEB) biomarker dynamics. n=20 patients at baseline (t=0). CRP: right-skewed (skew=1.88, CV=1.33), sampled from LogNormal(mu=2.82, sigma=1.49). Ferritin: right-skewed (skew=1.59, CV=0.75), sampled from LogNormal(mu=3.11, sigma=0.90). Hemoglobin, BMI, albumin: approximately symmetric (|skew|<0.7, CV<0.25), sampled from Uniform distributions. Time in years (age), span 0-12."
+  }

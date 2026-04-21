@@ -2,6 +2,8 @@
 
 Usage:
     python -m analysis.pipeline.ts_summary_stats --problem_name aki
+    python -m analysis.pipeline.ts_summary_stats --problem_name aki --split train
+    python -m analysis.pipeline.ts_summary_stats --problem_name aki --split test
 """
 
 import argparse
@@ -15,7 +17,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compute population-level time series summary statistics.",
     )
-    parser.add_argument("--problem_name", required=True, help="Problem name (e.g. aki). CSV read from data/<problem_name>/<problem_name>.csv.")
+    parser.add_argument("--problem_name", required=True, help="Problem name (e.g. aki).")
+    parser.add_argument(
+        "--split",
+        default=None,
+        choices=["train", "test"],
+        help=(
+            "Data split to use. If 'train', reads data/<problem_name>/<problem_name>_train.csv "
+            "and saves ts_stats_train.csv / ts_stats_train.json. "
+            "If 'test', reads the _test.csv counterpart. "
+            "Omit to read data/<problem_name>/<problem_name>.csv and save ts_stats.csv / ts_stats.json."
+        ),
+    )
     parser.add_argument("--time_col", default="t", help="Name of time column.")
     parser.add_argument("--id_col", default="id", help="Name of identifier column.")
     parser.add_argument(
@@ -38,7 +51,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    data_path = os.path.join("data", args.problem_name, f"{args.problem_name}.csv")
+    suffix = f"_{args.split}" if args.split else ""
+    data_path = os.path.join("data", args.problem_name, f"{args.problem_name}{suffix}.csv")
     out_root = os.path.join("workspace", args.problem_name, "stats")
 
     csv_path, json_path = save_observed_stats(
@@ -50,6 +64,7 @@ def main() -> None:
         agg=args.agg,
         ar_order=args.ar_order,
         min_patients=args.min_patients,
+        split=args.split,
     )
 
     print(f"Statistics saved to:\n  CSV : {csv_path}\n  JSON: {json_path}")

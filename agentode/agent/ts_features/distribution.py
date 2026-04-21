@@ -38,9 +38,17 @@ def iqr(x: np.ndarray) -> float:
 
 def skewness(x: np.ndarray) -> float:
     """Compute Fisher-Pearson skewness of a time-ordered series."""
+    import warnings
     x = np.asarray(x, dtype=float)
     x = x[~np.isnan(x)]
-    return float(stats.skew(x)) if x.size > 2 else np.nan
+    if x.size <= 2:
+        return np.nan
+    if np.allclose(x, x[0]):
+        print("[ts_features] near-constant trajectory detected — skewness returning NaN")
+        return np.nan
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return float(stats.skew(x))
 
 
 def kurtosis(x: np.ndarray) -> float:

@@ -4,9 +4,10 @@ Each function computes a single statistic from one or more series, with clear
 docstrings and type hints suitable for tool registration.
 """
 
-from .distribution import mean, variance, skewness, std, iqr, outlier_fraction, outlier_frac
+from .distribution import mean, variance, skewness, std, iqr, outlier_fraction, outlier_frac, value_range
 from .autocorrelation import (
     acf_lag1,
+    acf_lag2,
     acf_lag3,
     acf_1e_timescale,
     dominant_frequency,
@@ -20,7 +21,7 @@ from .nonlinear import time_reversal_asymmetry
 from .scaling import dfa_alpha, spectral_slope
 from .model_fit import ar_coef_1, ar_coef_2, turning_point_rate, exp_smoothing_alpha
 from .trend import spearman_trend
-from .pairwise import diff_corr, level_corr
+from .pairwise import diff_corr, level_corr, ccf_lag1
 from .volatility import mean_crossing_rate, mean_abs_diff
 
 __all__ = [
@@ -31,7 +32,9 @@ __all__ = [
     "iqr",
     "outlier_fraction",
     "outlier_frac",
+    "value_range",
     "acf_lag1",
+    "acf_lag2",
     "acf_lag3",
     "acf_1e_timescale",
     "dominant_frequency",
@@ -52,6 +55,7 @@ __all__ = [
     "spearman_trend",
     "diff_corr",
     "level_corr",
+    "ccf_lag1",
     "mean_crossing_rate",
     "mean_abs_diff",
 ]

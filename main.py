@@ -19,7 +19,7 @@ parser.add_argument('--port', type=int, default=None)
 parser.add_argument('--use_api', type=bool, default=False)
 parser.add_argument('--api_model', type=str, default=None)
 parser.add_argument('--api_provider', type=str, default="openai",
-                    help="API provider to use when API backends are used (e.g., 'openai' or 'deepseek').")
+                    help="API provider to use when API backends are used (e.g., 'openai', 'deepseek', or 'openrouter').")
 parser.add_argument('--structure_backend', type=str, default=None,
                     help="Backend for ODE structure inference: 'api' | 'openwebui' | 'local'.")
 parser.add_argument('--param_backend', type=str, default=None,
@@ -28,6 +28,8 @@ parser.add_argument('--structure_model', type=str, default=None,
                     help="Model identifier for ODE structure inference (overrides api_model for structure).")
 parser.add_argument('--param_model', type=str, default=None,
                     help="Model identifier for parameter inference / optimisation (defaults to structure_model/api_model).")
+parser.add_argument('--api_max_tokens', type=int, default=None,
+                    help="Cap completion tokens for OpenAI-compatible chat APIs to avoid oversized provider defaults.")
 parser.add_argument('--spec_path', type=str)
 parser.add_argument('--log_path', type=str, default="./logs/oscillator1")
 parser.add_argument('--problem_name', type=str, default="oscillator1")
@@ -57,6 +59,8 @@ if __name__ == '__main__':
         config_kwargs["structure_model"] = args.structure_model
     if args.param_model is not None:
         config_kwargs["param_model"] = args.param_model
+    if args.api_max_tokens is not None:
+        config_kwargs["api_max_tokens"] = args.api_max_tokens
     if args.trajectory_bin_width is not None:
         config_kwargs["trajectory_bin_width"] = args.trajectory_bin_width
     config = config.Config(**config_kwargs)
