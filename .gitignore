@@ -2,6 +2,10 @@
 CLAUDE.md
 .claude_resources.json
 
+# Run scripts
+run_agentode.sh
+run_server.sh
+
 # Conda environment
 environment.yml
 
