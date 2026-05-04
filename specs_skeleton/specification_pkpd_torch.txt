@@ -1,0 +1,64 @@
+"""
+Find the symbolic skeleton of an ODE system representing
+a four-variable pharmacokinetic-immunodynamic process.
+
+The system involves four coupled state variables:
+
+    - depot (amount): Drug amount in the absorption compartment.
+    - central (amount): Drug amount in the central compartment.
+    - immune (cells): Immune cell population subject to
+      drug-mediated suppression following saturating dose-response.
+    - effector (cells): Effector cell population recruited through
+      contact-dependent interaction with immune cells.
+
+The time unit is days. Observations span t in [0, 50.0]
+
+HARD CONSTRAINT:
+- The parameter array has at most MAX_NPARAMS = 10 slots.
+- Do NOT skip indices (e.g., using 8 while omitting 6 or 7 is invalid).
+- Use only as many parameters as necessary; avoid introducing redundant parameters.
+- Always index parameters and biomarkers with ellipsis notation
+  params[..., k] and biomarkers[..., k] — never use params[k]
+  or biomarkers[k] directly.
+"""
+
+import torch
+
+# Initialize parameters
+MAX_NPARAMS = 10
+params = torch.ones(MAX_NPARAMS)
+
+
+@system.evolve
+def system(biomarkers: torch.Tensor, params: torch.Tensor, t: float) -> torch.Tensor:
+    """Symbolic skeleton for a 4-variable PKPD ODE system.
+
+    Args:
+        biomarkers: A torch tensor containing
+            [depot, central, immune, effector].
+        params: Tensor of numeric constants or parameters to be optimized.
+                You must not use any params[k] with k >= MAX_NPARAMS;
+                using more than 10 parameters is invalid.
+    Returns:
+        A torch tensor representing the temporal derivatives (d/dt)
+        of the state variables [d_depot/dt, d_central/dt, d_immune/dt, d_effector/dt].
+    """
+    depot    = biomarkers[..., 0]
+    central  = biomarkers[..., 1]
+    immune   = biomarkers[..., 2]
+    effector = biomarkers[..., 3]
+
+    # ---- depot dynamics ----
+    d_depot = params[..., 0] * depot
+
+    # ---- central dynamics ----
+    d_central = params[..., 1] * central
+
+    # ---- immune dynamics ----
+    d_immune = params[..., 2] * immune
+
+    # ---- effector dynamics ----
+    d_effector = params[..., 3] * effector
+
+    d_biomarkers = torch.stack([d_depot, d_central, d_immune, d_effector], dim=-1)
+    return d_biomarkers
