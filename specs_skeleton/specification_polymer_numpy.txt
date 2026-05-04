@@ -1,28 +1,15 @@
 """
 Find the symbolic skeleton of an ODE system that represents a
-four-variable reversible chemical reaction network exhibiting
-monotonic convergence to equilibrium.
+four-variable reversible polymer cross-linking reaction network.
 
 The system involves four coupled state variables:
 
-    - x0 (concentration): A reactant species present at high
-      initial concentration that is consumed through two
-      separate bimolecular reactions.
-
-    - x1 (concentration): An intermediate species present at
-      very low initial concentration that is produced and
-      consumed through bimolecular interactions with x0.
-
-    - x2 (concentration): A product species that accumulates
-      through a bimolecular reaction between x0 and x1 and
-      can dissociate back.
-
-    - x3 (concentration): A secondary species present at
-      moderate initial concentration that reacts with x0
-      and is regenerated through x1.
+    - x0 (concentration, a.u.): diene component
+    - x1 (concentration, a.u.): dienophile component
+    - x2 (concentration, a.u.): cross-linked adduct product
+    - x3 (concentration, a.u.): de-cross-linked component
 
 The time unit is dimensionless. Observations span t in [0, 50.0]
-with 101 timepoints (dt = 0.5).
 
 HARD CONSTRAINT:
 - The parameter array has at most MAX_NPARAMS = 6 slots.
@@ -63,7 +50,7 @@ def system(biomarkers: np.ndarray, params: np.ndarray) -> np.ndarray:
     dx2 = params[2] * x2
 
     # ---- x3 dynamics ----
-    dx3 = params[3] * x3
+    dx3 = -params[3] * x3
 
     d_biomarkers = np.array([dx0, dx1, dx2, dx3], dtype=float)
     return d_biomarkers

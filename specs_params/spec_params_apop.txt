@@ -5,7 +5,7 @@ intracellular signaling cascades.
 
 
 [SHARED]
-Simulation: t dimensionless, horizon = 10, dt = 0.1
+Simulation: t dimensionless, horizon = 10
 State variables: initiator (initiator caspase concentration),
 regulator (regulatory protein concentration),
 effector (effector caspase concentration)
@@ -98,8 +98,8 @@ which parameters are driving the reported implausibilities and how
 to correct them.
 
 - mean_trajectory.png     : mean +/- CI over time per variable
-- diff_corr_heatmap.png   : differential correlations between
-                            initiator, regulator, and effector
+- diff_corr_heatmap.png   : first-difference Spearman correlations
+                            between initiator, regulator, and effector
 - faceted_by_baseline.png : mean +/- CI trajectories stratified by
                             each variable's initial condition quartile
                             (Q1 lowest, Q4 highest)
@@ -172,8 +172,8 @@ the synthetic distribution fails to reproduce the observed data.
 - mean_trajectory.png     : mean +/- CI over time per variable;
                             blue solid = observed, red dashed = synthetic
 
-- diff_corr_heatmap.png   : differential correlations between
-                            initiator, regulator, and effector;
+- diff_corr_heatmap.png   : first-difference Spearman correlations
+                            between initiator, regulator, and effector;
                             left panel = observed, right panel = synthetic
 
 - faceted_by_baseline.png : mean +/- CI trajectories stratified by
@@ -181,10 +181,6 @@ the synthetic distribution fails to reproduce the observed data.
                             (Q1 lowest, Q4 highest);
                             blue solid = observed, red dashed = synthetic
 
-- umap.png                : population structure of observed and
-                            synthetic; blue circle = observed,
-                            red triangle = synthetic; do not interpret
-                            point distances as metric
 
 
 PARAMETER DISTRIBUTIONS
@@ -245,52 +241,13 @@ structure and supported by evidence from iteration history.
 
 
 [UPDATE]
-MANDATORY WORKFLOW
-You must complete the following steps in order. Do not skip any
-step. Do not propose parameter updates until all required history
-has been read.
-
-STEP 1 — Interpret failure modes mechanistically
-For each diagnosed failure mode: interpret it in terms of the ODE
-structure, identify what dynamic process is misrepresented, and
-identify which part of the ODE system needs to change. If a failure
-mode lacks a clear mechanistic interpretation, mark it uncertain.
-
-STEP 2 — Map mechanisms to parameters
-For each supported failure mode: identify the governing ODE
-parameters, explain what their current distributions imply about
-the assumed trajectory population, and state the directional
-correction needed.
-
-STEP 3 — Read iteration history
-Use read_iteration to read past iterations before proposing any
-updates. Required coverage:
-- Best and worst iterations (log_sl file, not just params)
-- 3+ iterations where log_sl changed substantially
-- 3 most recent iterations
-
-Stopping rule: do not stop until, for every parameter you plan to
-change, you can name (1) an iteration where changing it helped,
-(2) one where it hurt or over-corrected, and (3) the inferred
-reason from the ODE structure.
-
-STEP 4 — Synthesize evidence
-Produce an internal evidence map before proposing changes:
-failure mode → mechanism → parameter(s) → iterations read →
-observed effect → lesson
-
-Every parameter change must be traceable through this chain. Cite
-specific iteration IDs — not vague terms like "past runs suggest."
-
-STEP 5 — Propose updated distributions
-Propose updated LogNormal distributions (linear space only). Every
-change must correct a specific mechanistic mismatch, be consistent
-with the ODE structure, and be grounded in concrete iteration
-history.
-
-CONTEXT
-Log SL: measures joint alignment between synthetic and observed
-trajectory distributions. Less negative = better.
+CALIBRATION GOAL (CRITICAL)
+Address diagnosed failure modes strictly in order of severity —
+high before medium before low. Do not make changes that improve a
+lower-severity mismatch at the cost of worsening a higher-severity
+one. Reason at the level of parameter roles before reasoning about
+specific values — what each parameter does in the system matters
+more than its index.
 
 
 DIAGNOSED FAILURE MODES
@@ -301,6 +258,79 @@ highest log SL value so far.
 {failure_modes}
 
 
-STAT COMPARISON
-All statistics below are computed per trajectory then averaged
-across trajectories. Cross-variable
+MANDATORY WORKFLOW
+
+STEP 1 — Map failure modes to parameter roles
+For each diagnosed failure mode:
+- identify which dynamical property of the ODE is misrepresented
+- identify which parameter roles in the ODE govern that property
+- explain how those roles interact jointly — adjusting one role
+  will affect other properties through shared ODE terms
+- state the direction of coordinated adjustment needed across
+  all governing roles simultaneously
+
+Reason at the level of parameter roles before reasoning about
+specific values.
+
+STEP 2 — Check for role conflicts
+Identify whether correcting one failure mode through its governing
+parameter roles will worsen another failure mode through shared or
+coupled roles. If a conflict exists, prioritise the highest
+severity failure mode and accept the tradeoff explicitly.
+
+STEP 3 — Review iteration history
+The best-performing iterations are provided in the context message
+above. For each role adjustment identified in Steps 1 and 2, find
+what happened when similar role adjustments were made previously.
+
+For every role adjustment you plan to make, cite: one iteration
+where a similar adjustment helped, one where it hurt or caused a
+conflict, and the ODE-based reason why. If the history is too thin
+to establish this, prefer the smallest possible change.
+
+STEP 4 — Propose coherent joint update
+Propose parameter values that jointly address the highest priority
+failure modes. Every change must:
+- correct a specific dynamical property through its governing roles
+- be consistent with how those roles interact in the ODE
+- be coordinated across all parameters serving related roles —
+  not one-at-a-time corrections
+- be conservative — prefer the smallest change that addresses
+  the failure mode, since large changes in nonlinear systems
+  have unpredictable joint effects
+
+
+STABILITY CHECK (HARD)
+Before finalising, verify that the proposed parameter values
+support a stable system equilibrium. If the proposed parameters
+would drive the system to collapse or explosion, revise them
+before returning the output contract.
+
+
+ITERATION HISTORY
+An index of all past iterations is shown below. The best-performing
+iterations (full params and logSL breakdown) are provided in the
+context message above — use them to ground your parameter changes.
+
+{iteration_index}
+
+
+PRIOR POLICY (HARD)
+- All parameters are LogNormal; report linear-space mean and SD —
+  do not use log-space means or SDs
+- Every parameter entry must include: mean, sd, units, and rationale
+- rationale must be one sentence citing the parameter role in the
+  ODE and the coordinated correction made — not the parameter index
+
+
+OUTPUT CONTRACT
+Return a single JSON block containing ALL parameters:
+
+{
+  "summary": "One sentence describing the key role adjustments
+              made and why.",
+  "params": {
+    "0": {"mean": ..., "sd": ..., "units": "...", "rationale": "..."},
+    ...
+  }
+}

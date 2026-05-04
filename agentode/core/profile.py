@@ -1,4 +1,4 @@
-# profile the experiment with tensorboard
+"""Experiment profiling and TensorBoard logging."""
 
 from __future__ import annotations
 
@@ -48,17 +48,14 @@ class Profiler:
         self._each_sample_tot_sample_time = []
         self._each_sample_tot_evaluate_time = []
 
-        # Optionally write a one-time LLM configuration metadata file alongside
-        # the run logs so that model/backend and hyperparameters are recorded
-        # independently of per-sample JSON files.
+        # Record run-level LLM metadata separately from per-sample logs.
         if log_dir and llm_metadata:
             meta_path = os.path.join(log_dir, 'llm_metadata.json')
             try:
                 with open(meta_path, 'w') as f:
                     json.dump(llm_metadata, f, indent=2)
             except Exception:
-                # Fail silently if we cannot write metadata; this should not
-                # interrupt the main experiment loop.
+                # Metadata logging should not interrupt the experiment loop.
                 logging.exception('Failed to write LLM metadata log.')
 
     def _write_tensorboard(self):
@@ -84,8 +81,7 @@ class Profiler:
             global_step=self._num_samples
         )
         
-        # Log the best function string; fall back to a placeholder if we
-        # have not yet recorded any valid best program.
+        # Fall back to a placeholder before any valid best program exists.
         best_program_str = self._cur_best_program_str or 'No valid program logged yet.'
         self._writer.add_text(
             'Best Function String',
@@ -128,7 +124,6 @@ class Profiler:
         score = function.score
         llm_source = getattr(function, 'llm_source', None)
         llm_model_name = getattr(function, 'llm_model_name', None)
-        # log attributes of the function
         from agentode.core import param_utils
         num_params = param_utils.count_params_used(function.body)
         print(f'================= Evaluated Function =================')
@@ -145,13 +140,13 @@ class Profiler:
                 print(f'LLM model    : {llm_model_name}')
         print(f'======================================================\n\n')
 
-        # update best function in curve
+        # Track the best-scoring function seen so far.
         if function.score is not None and score > self._cur_best_program_score:
             self._cur_best_program_score = score
             self._cur_best_program_sample_order = sample_orders
             self._cur_best_program_str = function_str
 
-        # update statistics about function
+        # Update aggregate counters.
         if score:
             self._evaluate_success_program_num += 1
         else:

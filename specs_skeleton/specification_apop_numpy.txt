@@ -1,15 +1,18 @@
 """
 Find the symbolic skeleton of an ODE system representing
-a three-variable apoptosis signaling cascade.
+a three-variable caspase activation cascade.
 
 The system involves three coupled state variables:
 
-    - initiator (concentration): Initiator caspase
-    - regulator (concentration): Regulatory protein
-    - effector (concentration): Effector caspase
+- initiator: upstream caspase activity/concentration
+- regulator: intermediate regulatory component
+- effector: downstream effector caspase activity/concentration
+
+
+The naming reflects their role in the cascade, but interactions
+do not need to be strictly feedforward.
 
 The time unit is dimensionless. Observations span t in [0, 10.0]
-with 101 timepoints (dt = 0.1).
 
 HARD CONSTRAINT:
 - The parameter array has at most MAX_NPARAMS = 10 slots.
@@ -42,13 +45,13 @@ def system(biomarkers: np.ndarray, params: np.ndarray) -> np.ndarray:
     initiator, regulator, effector = biomarkers
 
     # ---- initiator dynamics ----
-    d_initiator = params[0] * initiator
+    d_initiator = 0.0
 
     # ---- regulator dynamics ----
-    d_regulator = params[1] * regulator
+    d_regulator = 0.0
 
     # ---- effector dynamics ----
-    d_effector = params[2] * effector
+    d_effector = 0.0
 
     d_biomarkers = np.array([d_initiator, d_regulator, d_effector],
                             dtype=float)

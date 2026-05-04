@@ -1,78 +1,84 @@
 {
-    "problem_name": "pkpd_immune",
+    "problem_name": "polymer",
+    "disease": "polymer DA cross-linking",
+    "description": "Polymer Diels-Alder cross-linking initial conditions. State variables x0-x3 sampled independently from uniform distributions. System: four-variable reversible chemical reaction network with monotonic convergence to equilibrium.",
     "biomarkers": {
       "x0": {
-        "distribution": "lognormal",
-        "mean": 5.0,
-        "std": 1.0,
-        "clip_min": 2.0,
-        "clip_max": 10.0,
+        "display_name": "Diene (x0)",
+        "unit": "concentration",
+        "distribution": "uniform",
+        "clip_min": 1.0,
+        "clip_max": 30.0,
+        "observed": true,
         "physiological_range": {
           "normal_min": 0.0,
-          "normal_max": 10.0,
+          "normal_max": 50.0,
           "critical_min": 0.0,
-          "critical_max": 10.0
+          "critical_max": 50.0
         },
-        "description": "Drug depot amount at dose time"
+        "description": "Diene component concentration — starts high (up to 30), consumed through bimolecular reactions"
       },
       "x1": {
-        "distribution": "fixed",
-        "value": 0.0,
+        "display_name": "Dienophile (x1)",
+        "unit": "concentration",
+        "distribution": "uniform",
+        "clip_min": 0.0,
+        "clip_max": 0.1,
+        "observed": true,
         "physiological_range": {
           "normal_min": 0.0,
-          "normal_max": 6.0,
+          "normal_max": 3.0,
           "critical_min": 0.0,
-          "critical_max": 6.0
+          "critical_max": 3.0
         },
-        "description": "Drug central compartment — starts at 0, peaks ~3-4 around day 1-2, returns to 0"
+        "description": "Dienophile component concentration — starts near zero, transiently rises via bimolecular feedback"
       },
       "x2": {
-        "distribution": "lognormal",
-        "mean": 6.67,
-        "std": 1.5,
-        "clip_min": 2.0,
-        "clip_max": 15.0,
+        "display_name": "Cross-linked adduct (x2)",
+        "unit": "concentration",
+        "distribution": "uniform",
+        "clip_min": 0.0,
+        "clip_max": 0.1,
+        "observed": true,
         "physiological_range": {
           "normal_min": 0.0,
-          "normal_max": 15.0,
+          "normal_max": 12.0,
           "critical_min": 0.0,
-          "critical_max": 15.0
+          "critical_max": 12.0
         },
-        "description": "Immune cell baseline (~x2* = s/d = 6.67)"
+        "description": "Cross-linked adduct concentration — starts near zero, accumulates as x0*x1 reaction proceeds"
       },
       "x3": {
-        "distribution": "lognormal",
-        "mean": 1.0,
-        "std": 0.30,
-        "clip_min": 0.1,
-        "clip_max": 5.0,
+        "display_name": "De-cross-linked component (x3)",
+        "unit": "concentration",
+        "distribution": "uniform",
+        "clip_min": 0.5,
+        "clip_max": 10.0,
+        "observed": true,
         "physiological_range": {
           "normal_min": 0.0,
-          "normal_max": 5.0,
+          "normal_max": 20.0,
           "critical_min": 0.0,
-          "critical_max": 5.0
+          "critical_max": 20.0
         },
-        "description": "Effector cell baseline (below drug-free SS x3* ≈ 2.15)"
+        "description": "De-cross-linked component concentration — starts at moderate level (0.5-10), consumed by x0"
       }
     },
     "simulation_params": {
+      "default_sample_size": 100,
       "time_span": [0, 50.0],
-      "time_unit": "days",
+      "time_unit": "dimensionless",
       "time_points": 101,
-      "trajectory_bin_width": 0.5
+      "trajectory_bin_width": 0.5,
+      "description": "100 intervals of dt=0.5 over t=[0,50], matching the synthetic data generator"
     },
     "negative": false,
     "correlation_matrix": [
-      [1, 0, 0, 0],
-      [0, 1, 0, 0],
-      [0, 0, 1, 0],
-      [0, 0, 0, 1]
+      [1.0, 0.0, 0.0, 0.0],
+      [0.0, 1.0, 0.0, 0.0],
+      [0.0, 0.0, 1.0, 0.0],
+      [0.0, 0.0, 0.0, 1.0]
     ],
-    "notes": {
-      "fixed_structural_param": "eps=0.05 (effector intraspecific competition, stabilises x3)",
-      "drug_free_ss": "x2*=6.67, x3*=2.15 (mean parameters)",
-      "x1_note": "x1 is always fixed at 0 — central compartment empty at dose time",
-      "x2_note": "IC mean set to x2*=s/d=6.67 so individuals start near immune equilibrium",
-      "x3_note": "IC mean set below x3*=2.15 so effectors rise toward SS during simulation"
-    }
+    "random_seed": null,
+    "notes": "ICs sampled independently from uniform distributions matching the synthetic data generator: x0~U(1,30), x1~U(0,0.1), x2~U(0,0.1), x3~U(0.5,10). Fixed parameters: k1=0.03, k2=0.01, k3=0.08, k4=0.03."
   }
