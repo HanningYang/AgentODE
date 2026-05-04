@@ -36,7 +36,7 @@ class ExperienceBufferConfig:
     functions_per_prompt: int = 2
     num_islands: int = 10 
     reset_period: int = 4 * 60 * 60
-    cluster_sampling_temperature_init: float = 0.1 # 0.8 # 0.1
+    cluster_sampling_temperature_init: float = 0.1
     cluster_sampling_temperature_period: int = 30_000
 
 
@@ -69,8 +69,7 @@ class Config:
             then api_model.
 
         openwebui_base_url (str): Base URL for OpenWebUI API.
-            Defaults to https://openwebui.uni-freiburg.de/api
-            Can be overridden with OPENWEBUI_URL env var.
+            Must be set via OPENWEBUI_URL env var or --openwebui_url argument.
 
         api_max_tokens (int): Maximum completion tokens requested from
             OpenAI-compatible chat APIs. Keeping this capped avoids provider
@@ -91,6 +90,18 @@ class Config:
         param_backend (str | None): Backend used specifically for parameter
             inference / optimisation. If None, falls back to structure_backend.
 
+        param_search_mode (str): Parameter-search strategy for each proposed
+            ODE structure. One of:
+            'default'  — current inference + diagnosis + update loop
+            'ablation' — run independent initial-inference trials only and
+                         keep the best finite-logSL parameter set
+
+        ablation_trials (int): Number of independent parameter-search trials
+            to run per ODE structure when ``param_search_mode='ablation'``.
+
+        ablation_spec_dir (str): Directory containing the ablation parameter
+            prompt specs (for example ``specs_params_abla``).
+
         trajectory_bin_width (float): Default time-bin width (in the same units
             as the `t` column) used for observed vs synthetic trajectory
             comparison figures.
@@ -106,7 +117,7 @@ class Config:
     # --- LLM backend ---
     structure_backend: str = os.environ.get(
         "STRUCTURE_BACKEND", os.environ.get("LLM_MODE", "openwebui")
-    )  # 'api' | 'openwebui' | 'local'
+    )
     param_backend: str | None = os.environ.get(
         "PARAM_BACKEND", os.environ.get("PARAM_LLM_MODE", None)
     )
@@ -114,19 +125,20 @@ class Config:
     structure_model: str | None = os.environ.get("STRUCTURE_MODEL", None)
     param_model: str | None = os.environ.get("PARAM_MODEL", None)
     api_max_tokens: int = int(os.environ.get("API_MAX_TOKENS", "8192"))
-    openwebui_base_url: str = os.environ.get(
-        "OPENWEBUI_URL", "https://openwebui.uni-freiburg.de/api"
-    )
+    openwebui_base_url: str = os.environ.get("OPENWEBUI_URL", "")
 
-    # kept for backwards compatibility
+    # Deprecated compatibility flag.
     use_api: bool = False
     api_provider: str = os.environ.get("API_PROVIDER", "openai")
 
     # --- Parameter optimisation ---
-    param_optim_steps: int = 20
-    param_optim_patience: int = 20
+    param_optim_steps: int = 10
+    param_optim_patience: int = 5
     param_optim_rel_improvement: float = 0.1
     param_optim_extended_steps: int = 20
+    param_search_mode: str = os.environ.get("PARAM_SEARCH_MODE", "default")
+    ablation_trials: int = int(os.environ.get("ABLATION_TRIALS", "5"))
+    ablation_spec_dir: str = os.environ.get("ABLATION_SPEC_DIR", "specs_params_abla")
 
     trajectory_bin_width: float = 14.0
 

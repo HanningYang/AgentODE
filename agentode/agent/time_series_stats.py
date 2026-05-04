@@ -199,7 +199,7 @@ _PRECISION: Dict[str, int] = {
     "turning_point_rate": 4,
     "spearman_trend": 4,
     "first_diff_spearman_corr": 4,
-    # MNTD-style pooled per-trajectory stats
+    # MNSD-style pooled per-trajectory stats
     "mean": 3,
     "std": 3,
     "iqr": 3,

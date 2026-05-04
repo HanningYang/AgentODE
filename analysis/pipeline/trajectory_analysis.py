@@ -3,7 +3,7 @@
 Usage:
     python -m analysis.pipeline.trajectory_analysis \
         --problem_name aki \
-        --bin_width 24
+        --bin_width 12
 
 Data is resolved automatically:
     data/<problem_name>/<problem_name>_train.csv  (preferred if it exists)
@@ -310,22 +310,41 @@ def main() -> None:
             [0, 0.25, 0.5, 0.75, 1.0]
         ).values
 
+        # First pass: collect stats for all quartiles to get shared y range.
+        q_stats = []
         for qi in range(4):
-            ax = axes[row][qi]
-            col = q_colors[qi]
-            lo = quartiles[qi]
-            hi = quartiles[qi + 1]
-
+            lo, hi = quartiles[qi], quartiles[qi + 1]
             ids_q = df_bl[
                 (df_bl["baseline"] >= lo) & (df_bl["baseline"] <= hi)
             ]["id"].unique()
             sub = df_b[df_b["id"].isin(ids_q)]
-
             if len(sub) == 0:
+                q_stats.append(None)
+            else:
+                q_stats.append((bin_stats(sub, var), ids_q))
+
+        all_lo, all_hi = [], []
+        for entry in q_stats:
+            if entry is None:
+                continue
+            st, _ = entry
+            all_lo.append((st["mean"] - st["ci"]).min())
+            all_hi.append((st["mean"] + st["ci"]).max())
+        y_min = min(all_lo) if all_lo else 0
+        y_max = max(all_hi) if all_hi else 1
+        y_pad = (y_max - y_min) * 0.05
+        shared_ylim = (y_min - y_pad, y_max + y_pad)
+
+        # Second pass: draw with shared y range.
+        for qi in range(4):
+            ax = axes[row][qi]
+            col = q_colors[qi]
+
+            if q_stats[qi] is None:
                 ax.set_visible(False)
                 continue
 
-            st = bin_stats(sub, var)
+            st, ids_q = q_stats[qi]
             t_vals = st["t_centre"].values
             ax.plot(t_vals, st["mean"].values, color=col, lw=2)
             ax.fill_between(
@@ -348,6 +367,7 @@ def main() -> None:
             )
 
             ax.set_xlim(0, t_max)
+            ax.set_ylim(*shared_ylim)
             if row == 0:
                 ax.set_title(q_labels[qi], fontsize=10)
             if row == n_vars - 1:

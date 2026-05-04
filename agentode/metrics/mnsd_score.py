@@ -1,6 +1,6 @@
-"""Mean Normalized Trajectory Discrepancy (MNTD) metric for ODE systems.
+"""Mean Normalized Summary Discrepancy (MNSD) metric for ODE systems.
 
-MNTD compares per-trajectory time-series statistics between observed and
+MNSD compares per-trajectory time-series statistics between observed and
 synthetic data using data-driven IQR normalisation:
 
   - For each (variable, statistic) on the observed data:
@@ -32,7 +32,7 @@ from agentode.agent.time_series_stats import collect_per_trajectory_stats
 from agentode.ode import initial_condition_utils
 
 
-N_PATIENTS_MNTD = 1000
+N_PATIENTS_MNSD = 1000
 
 
 _DECIMALS: Dict[str, int] = {
@@ -80,21 +80,18 @@ def _nanmean(values) -> float:
 
 
 def _ensure_ts_stats(problem_name: str) -> pd.DataFrame:
-    """Load pooled observed stats for scoring.
-
-    Prefers ``ts_stats_test.csv`` when it exists (train/test split problems),
-    falls back to ``ts_stats.csv`` otherwise.
-    """
+    """Load train-split stats for scoring; falls back to ``ts_stats.csv`` for
+    problems without a train/test split. """
     out_root = os.path.join("workspace", problem_name, "stats")
-    test_csv = os.path.join(out_root, "ts_stats_test.csv")
+    train_csv = os.path.join(out_root, "ts_stats_train.csv")
     default_csv = os.path.join(out_root, "ts_stats.csv")
 
-    csv_path = test_csv if os.path.exists(test_csv) else default_csv
+    if os.path.exists(train_csv):
+        return pd.read_csv(train_csv)
+    return pd.read_csv(default_csv)
 
-    return pd.read_csv(csv_path)
 
-
-def _mntd_distance_from_trajectories(
+def _mnsd_distance_from_trajectories(
     problem_name: str,
     pooled_obs: pd.DataFrame,
     synthetic_traj: np.ndarray,
@@ -102,7 +99,7 @@ def _mntd_distance_from_trajectories(
     biomarker_names: list[str],
     verbose: bool = False,
 ) -> float | None:
-    """Compute MNTD between pooled observed stats and synthetic trajectories."""
+    """Compute MNSD between pooled observed stats and synthetic trajectories."""
     n_patients, n_times, n_bio = synthetic_traj.shape
     assert n_bio == len(biomarker_names)
 
@@ -143,7 +140,7 @@ def _mntd_distance_from_trajectories(
                 raw_diff_rounded = _round(stat, raw_diff)
                 if raw_diff_rounded == 0.0:
                     norm_diff = 0.0
-                elif np.isnan(iqr_val) or iqr_val < 1e-6:
+                elif np.isnan(iqr_val) or iqr_val < 0.01:
                     norm_diff = np.nan
                 else:
                     norm_diff = raw_diff / iqr_val
@@ -174,7 +171,7 @@ def _mntd_distance_from_trajectories(
                 raw_diff_rounded = _round(stat, raw_diff)
                 if raw_diff_rounded == 0.0:
                     norm_diff = 0.0
-                elif np.isnan(iqr_val) or iqr_val < 1e-6:
+                elif np.isnan(iqr_val) or iqr_val < 0.01:
                     norm_diff = np.nan
                 else:
                     norm_diff = raw_diff / iqr_val
@@ -195,13 +192,13 @@ def _mntd_distance_from_trajectories(
     if valid_norm.empty:
         return None
 
-    mntd = float(valid_norm.mean())
+    mnsd = float(valid_norm.mean())
     if verbose:
-        print(f"[MNTD] Mean normalized trajectory discrepancy: {mntd:.6f}")
-    return mntd
+        print(f"[MNSD] Mean normalized summary discrepancy: {mnsd:.6f}")
+    return mnsd
 
 
-def evaluate_system_mntd(
+def evaluate_system_mnsd(
     system_func: Callable[[np.ndarray, np.ndarray], np.ndarray],
     problem_name: str,
     param_distributions: Dict[str, Dict[str, float]] | None,
@@ -210,7 +207,7 @@ def evaluate_system_mntd(
     backend: str = "cpu",
     standardization: bool = True,  # kept for API compatibility; unused here
 ) -> float | None:
-    """Evaluate a system via Mean Normalized Trajectory Discrepancy (MNTD)."""
+    """Evaluate a system via Mean Normalized Summary Discrepancy (MNSD)."""
     from agentode.ode import ode_simulator
     from agentode.core import param_utils
 
@@ -244,7 +241,7 @@ def evaluate_system_mntd(
 
     use_gpu_solver = backend == "gpu" and ode_simulator._cuda_available()
     if backend == "gpu" and not use_gpu_solver:
-        print("[mntd] CUDA unavailable; falling back to CPU odeint.")
+        print("[mnsd] CUDA unavailable; falling back to CPU odeint.")
 
     if use_gpu_solver:
         import torch
@@ -284,12 +281,12 @@ def evaluate_system_mntd(
             )
             return _filter_valid(trajectories)
 
-    trajectories = simulator(N_PATIENTS_MNTD, param_sampler, t_eval)
+    trajectories = simulator(N_PATIENTS_MNSD, param_sampler, t_eval)
 
     if trajectories.size == 0:
         return None
 
-    distance = _mntd_distance_from_trajectories(
+    distance = _mnsd_distance_from_trajectories(
         problem_name=problem_name,
         pooled_obs=pooled_obs,
         synthetic_traj=trajectories,
@@ -311,7 +308,7 @@ def compare_stats_iqr_from_dfs(
 ) -> tuple[pd.DataFrame, float]:
     """Utility to compare stats between two DataFrames using IQR normalisation.
 
-    This mirrors the MNTD logic but works on arbitrary observed/synthetic
+    This mirrors the MNSD logic but works on arbitrary observed/synthetic
     DataFrames (columns: id, t, biomarkers) without going through the ODE
     simulator. It is intended for offline analysis and debugging.
     """
@@ -386,7 +383,7 @@ def compare_stats_iqr_from_dfs(
                 raw_diff_rounded = _round(stat, raw_diff)
                 if raw_diff_rounded == 0.0:
                     norm_diff = 0.0
-                elif np.isnan(iqr_val) or iqr_val < 1e-6:
+                elif np.isnan(iqr_val) or iqr_val < 0.01:
                     norm_diff = np.nan
                 else:
                     norm_diff = raw_diff / iqr_val
@@ -422,7 +419,7 @@ def compare_stats_iqr_from_dfs(
                 raw_diff_rounded = _round(stat, raw_diff)
                 if raw_diff_rounded == 0.0:
                     norm_diff = 0.0
-                elif np.isnan(iqr_val) or iqr_val < 1e-6:
+                elif np.isnan(iqr_val) or iqr_val < 0.01:
                     norm_diff = np.nan
                 else:
                     norm_diff = raw_diff / iqr_val

@@ -1,19 +1,17 @@
 """
 Find the symbolic skeleton of an ODE system representing
-a four-variable pharmacological and immunological process.
+a four-variable pharmacokinetic-immunodynamic process.
 
 The system involves four coupled state variables:
 
     - depot (amount): Drug amount in the absorption compartment.
-
     - central (amount): Drug amount in the central compartment.
-
-    - immune (cells): Immune cell population.
-
-    - effector (cells): Effector cell population.
+    - immune (cells): Immune cell population subject to 
+      drug-mediated suppression following saturating dose-response.
+    - effector (cells): Effector cell population recruited through
+      contact-dependent interaction with immune cells.
 
 The time unit is days. Observations span t in [0, 50.0]
-with 101 timepoints (dt = 0.5).
 
 HARD CONSTRAINT:
 - The parameter array has at most MAX_NPARAMS = 10 slots.

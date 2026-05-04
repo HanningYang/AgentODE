@@ -53,7 +53,6 @@ def polynomial_quantile_stats_deg01(values: np.ndarray) -> np.ndarray:
     quantiles = np.arange(1, n + 1, dtype=float) / (n + 1)
 
     coeffs = np.polyfit(quantiles, sorted_vals, deg=1)
-    # Return [deg0, deg1] for convenience.
     return np.array([coeffs[1], coeffs[0]], dtype=float)
 
 
@@ -100,7 +99,6 @@ def compute_summary_stats(
 
     stats: List[float] = []
 
-    # 1. Marginal quantile polynomials on standardized values (2 * n_bio).
     for b, bio_name in enumerate(biomarker_names):
         all_values = trajectories[:, :, b].ravel()
         all_values = all_values[~np.isnan(all_values)]
@@ -113,7 +111,6 @@ def compute_summary_stats(
         coeffs = polynomial_quantile_stats_deg01(standardized_values)
         stats.extend(coeffs.tolist())
 
-    # 2. Temporal: lag-1 autocorrelation (n_bio).
     for b, _bio_name in enumerate(biomarker_names):
         y_t: List[float] = []
         y_t1: List[float] = []
@@ -131,8 +128,6 @@ def compute_summary_stats(
             autocorr = 0.0
         stats.append(autocorr)
 
-    # 3. Population-level trend: Spearman correlation between time and
-    #    population mean trajectory for each biomarker (n_bio).
     for b, _bio_name in enumerate(biomarker_names):
         mean_traj: List[float] = []
         for t_idx in range(n_times):
@@ -157,7 +152,6 @@ def compute_summary_stats(
             trend = 0.0
         stats.append(float(trend))
 
-    # 4. Dynamic: difference correlations between biomarker pairs.
     for b1 in range(n_bio):
         for b2 in range(b1 + 1, n_bio):
             diffs1: List[float] = []
@@ -207,7 +201,6 @@ def compute_summary_stats_from_df(
         print(f"Unique subjects: {df[subject_col].nunique()}")
         print(f"\nBiomarker columns: {biomarker_cols}")
 
-    # 1. Marginal quantile polynomials on standardized values.
     if verbose:
         print("\n[1] Quantile Polynomial Coefficients (deg0, deg1):")
     for col in biomarker_cols:
@@ -226,7 +219,6 @@ def compute_summary_stats_from_df(
             print(f"    Quantile poly deg0: {coeffs[0]:.6f}, deg1: {coeffs[1]:.6f}")
         stats.extend(coeffs.tolist())
 
-    # 2. Temporal: lag-1 autocorrelation per biomarker across episodes.
     if verbose:
         print("\n[2] Lag-1 Autocorrelation:")
     grouped = df.groupby(subject_col)
@@ -250,8 +242,6 @@ def compute_summary_stats_from_df(
             print(f"  {col}: {autocorr:.6f} (from {len(y_t)} lag pairs)")
         stats.append(autocorr)
 
-    # 3. Population-level trend: Spearman correlation between time and
-    #    population mean trajectory for each biomarker.
     if verbose:
         print("\n[3] Population-level trend (Spearman time vs mean biomarker):")
     for col in biomarker_cols:
@@ -274,7 +264,6 @@ def compute_summary_stats_from_df(
             print(f"  {col}: {trend:.6f} (from {n_timepoints} time points)")
         stats.append(float(trend))
 
-    # 4. Dynamic: difference correlations between biomarker pairs.
     if verbose:
         print("\n[4] Difference Correlations (between biomarker pairs):")
     for i, col1 in enumerate(biomarker_cols):
@@ -324,20 +313,16 @@ def get_stat_names(biomarker_cols: List[str]) -> List[str]:
     """Return human-readable names for summary statistics."""
     names: List[str] = []
 
-    # Quantile polynomial coefficients.
     for col in biomarker_cols:
         names.append(f"{col}_std_quantile_deg0")
         names.append(f"{col}_std_quantile_deg1")
 
-    # Lag-1 autocorrelation.
     for col in biomarker_cols:
         names.append(f"{col}_lag1_autocorr")
 
-    # Population-level trend.
     for col in biomarker_cols:
         names.append(f"{col}_pop_trend_spearman")
 
-    # Difference correlations.
     for i, col1 in enumerate(biomarker_cols):
         for j, col2 in enumerate(biomarker_cols):
             if j <= i:
@@ -349,7 +334,6 @@ def get_stat_names(biomarker_cols: List[str]) -> List[str]:
 
 def _human_readable_stat_label(stat_name: str, biomarker_names: List[str]) -> str:
     """Map internal stat name to a human-readable label with biomarker context."""
-    # Per-biomarker stats: "<bio>_<kind>"
     for bio in biomarker_names:
         prefix = f"{bio}_"
         if stat_name.startswith(prefix):
@@ -366,7 +350,6 @@ def _human_readable_stat_label(stat_name: str, biomarker_names: List[str]) -> st
                 label = kind
             return f"{bio}: {label}"
 
-    # Cross-biomarker dynamics: "diff_corr_{b1}_{b2}" where b1/b2 are prefixes.
     if stat_name.startswith("diff_corr_"):
         parts = stat_name.split("_")
         if len(parts) == 4:
@@ -541,7 +524,7 @@ def build_log_sl_json_data(
     syn_std = np.std(sim_stats, axis=0)
     stat_index = {name: i for i, name in enumerate(stat_names)}
 
-    # Per-biomarker stat suffix → log_sl key mapping
+    # Map internal stat suffixes to log_sl.json keys.
     _SUFFIX_TO_KEY = [
         ("std_quantile_deg0", "quantile_poly_deg0"),
         ("std_quantile_deg1", "quantile_poly_deg1"),
@@ -598,7 +581,6 @@ def _evaluate_system_logsl_core(
     from agentode.agent import violation_check
     from agentode.core import param_utils
 
-    # Load configuration and observed data (cached per problem).
     obs = get_observed_summary(problem_name)
     config = obs["config"]
     biomarker_names = obs["biomarker_names"]
@@ -608,8 +590,7 @@ def _evaluate_system_logsl_core(
     s_obs = obs["s_obs"]
     stat_names = obs["stat_names"]
 
-    # If no parameter distributions are available, we cannot form a meaningful
-    # synthetic likelihood; treat this as unevaluable.
+    # Without parameter distributions, the synthetic likelihood is unevaluable.
     if param_distributions is None:
         return None, None, None, None, None
 
@@ -622,7 +603,6 @@ def _evaluate_system_logsl_core(
 
     invalid_simulation_context: Dict[str, object] = {}
 
-    # Choose simulator backend.
     use_gpu_solver = backend == "gpu" and ode_simulator._cuda_available()
     if backend == "gpu" and not use_gpu_solver:
         print("[synthetic_likelihood] CUDA unavailable; falling back to CPU odeint.")
@@ -654,7 +634,6 @@ def _evaluate_system_logsl_core(
             )
             trajectories = traj_t.detach().cpu().numpy()
 
-            # Drop patients whose trajectories are numerically or physiologically invalid.
             valid_mask, _issues = ode_simulator.check_trajectory_normal_range_validity(
                 trajectories,
                 config=config,
@@ -700,7 +679,6 @@ def _evaluate_system_logsl_core(
                 params=param_sets,
                 method='odeint',
             )
-            # Drop patients whose trajectories are numerically or physiologically invalid.
             valid_mask, _issues = ode_simulator.check_trajectory_normal_range_validity(
                 trajectories,
                 config=config,
@@ -719,15 +697,12 @@ def _evaluate_system_logsl_core(
                     config=config,
                     check_nans=True,
                 )
-            # Map observed biomarker names to their indices in the full config
             observed_indices = [all_biomarker_names.index(name) for name in biomarker_names]
 
             if not np.any(valid_mask):
-                # No valid trajectories: return an empty array 
                 empty = trajectories[valid_mask][..., observed_indices]
                 return empty
 
-            # Restrict trajectories to valid patients and observed biomarkers.
             return trajectories[valid_mask][..., observed_indices]
 
     log_sl = LogSyntheticLikelihood(
@@ -762,9 +737,7 @@ def _evaluate_system_logsl_core(
         return float(log_likelihood), details, s_obs, stat_names, biomarker_names
 
     if verbose:
-        # Optional diagnostics: print variance of each summary statistic under
-        # the synthetic model so users can inspect which dimensions are highly
-        # variable (and therefore down-weighted in the likelihood).
+        # Print per-stat variances to show which dimensions are down-weighted.
         sigma_hat = details.get('sigma_hat')
         if sigma_hat is not None and sigma_hat.size > 0:
             variances = np.diag(sigma_hat)

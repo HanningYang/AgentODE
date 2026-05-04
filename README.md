@@ -1,14 +1,13 @@
-# AgentODE: Suitability of LLM and Expert Informed Frameworks for Inferring Longitudinal Rare Disease Models
+# Agentic ODE Discovery and Parameter Distribution Inference from Summary Statistics for Rare Diseases
 
 ## Overview
-**AgentODE:** A privacy-preserving framework for discovering ODE-based disease progression models from summary statistics using large language models, through iterative refinement. The framework supports:
+**AgentODE:** a framework that jointly discovers ODE structures and refines parameter distributions from population-level summary statistics.
+
+The framework supports:
 - **ODE skeleton discovery** - LLM-guided generation and refinement of ODE system structures informed by domain knowledge
 - **Parameter distribution inference** - Estimation of population-level parameter distributions from summary statistics
-- **Expert-informed priors** - Incorporation of clinical knowledge through prompt specifications
 
-![AgentODE overview](./images/overview_agentODE.png)
-
-![AgentODE parameter inference](./images/params_inference.png)
+![AgentODE overview](./images/AgentODE.png)
 
 ## Installation
 
@@ -21,7 +20,7 @@ pip install -r requirements.txt
 ```
 
 ## Dataset
-Acute Kidney Injury (AKI) example data extracted from MIMIC-IV 3.1 is provided in [data/aki/](./data/aki). The dataset includes longitudinal clinical measurements for AKI progression.
+A PKPD example dataset is provided in [data/pkpd/](./data/pkpd).
 
 ## Data Preparation
 
@@ -41,8 +40,8 @@ Example:
 
 ```bash
 python -m analysis.pipeline.ts_summary_stats \
-  --data data/aki/aki.csv \
-  --out_root workspace/aki/stats
+  --data data/pkpd/pkpd_train.csv \
+  --out_root workspace/pkpd/stats
 ```
 
 Output: `workspace/<PROBLEM_NAME>/stats/ts_stats.csv` and `ts_stats.json`.
@@ -62,9 +61,9 @@ Example:
 
 ```bash
 python -m analysis.pipeline.trajectory_analysis \
-  --data data/aki/aki.csv \
-  --problem_name aki \
-  --bin_width 24
+  --data data/pkpd/pkpd_train.csv \
+  --problem_name pkpd \
+  --bin_width 0.5
 ```
 
 Output figures are saved to `workspace/<PROBLEM_NAME>/figures/`.
@@ -114,14 +113,14 @@ python main.py \
 
 #### Option B: OpenWebUI
 
-Point the pipeline at an OpenWebUI instance (set `OPENWEBUI_URL` if not using the default):
+Point the pipeline at an OpenWebUI instance:
 
 ```bash
-export OPENWEBUI_URL=https://<YOUR_OPENWEBUI_HOST>/api
 export OPENWEBUI_API_KEY=<YOUR_OPENWEBUI_KEY>
 
 python main.py \
   --structure_backend openwebui \
+  --openwebui_url https://<YOUR_OPENWEBUI_HOST>/api \
   --structure_model <MODEL_NAME> \
   --problem_name <PROBLEM_NAME> \
   --spec_path <SPEC_PATH> \
@@ -152,6 +151,7 @@ export OPENAI_API_KEY=<YOUR_OPENAI_KEY>        # or DEEPSEEK_API_KEY, etc.
 
 python main.py \
   --structure_backend openwebui \
+  --openwebui_url https://<YOUR_OPENWEBUI_HOST>/api \
   --structure_model <LARGE_MODEL> \
   --param_backend api \
   --param_model gpt-4o \
@@ -171,15 +171,16 @@ python main.py \
   --log_path <LOG_PATH>
 ```
 
-Example (AKI with OpenWebUI):
+Example (PKPD with OpenWebUI):
 
 ```bash
 python main.py \
   --structure_backend openwebui \
+  --openwebui_url https://<YOUR_OPENWEBUI_HOST>/api \
   --structure_model <MODEL_NAME> \
-  --problem_name aki \
-  --spec_path specs_skeleton/specification_aki_numpy.txt \
-  --log_path logs/aki_run1
+  --problem_name pkpd \
+  --spec_path specs_skeleton/specification_pkpd_numpy.txt \
+  --log_path logs/pkpd_run1
 ```
 
 > **Debug logging:** set `AGENTODE_DEBUG_PRINTS=1` to print prompts, LLM responses, parameter distributions, and island states.
@@ -213,14 +214,14 @@ python analysis/posthoc/find_best_system.py --log_path <LOG_PATH>
 ```
 Returns: Best score and sample order.
 
-**Evaluate and visualize a specific system:**
+**Visualize trajectories for a specific system:**
 ```bash
-python analysis/posthoc/evaluate_and_visualize_system.py \
+python analysis/posthoc/syn_traj_visuals.py \
   --problem_name <PROBLEM_NAME> \
   --sample_order <SAMPLE_ORDER> \
   --log_path <LOG_PATH>
 ```
-Returns: Summary statistics comparison (observed vs simulated), synthetic log-likelihood, and trajectory visualizations saved to the log directory.
+Saves observed-vs-synthetic trajectory figures to `<LOG_PATH>/figures/sample<SAMPLE_ORDER>/`.
 
 ### Configuration
 Adjust pipeline parameters in [config.py](agentode/config.py).

@@ -1,5 +1,6 @@
 # Claude Code
 CLAUDE.md
+.claude_resources.json
 
 # Conda environment
 environment.yml
@@ -14,18 +15,27 @@ __pycache__/
 # Logs
 logs/
 
-# Analysis scripts
-analysis/posthoc/inspect_system_from_log.py
-analysis/posthoc/generate_synthetic_data.py
-analysis/posthoc/generate_synthetic_data_from_obs_ic.py
-analysis/posthoc/compare_stats.py
-analysis/posthoc/syn_traj_visuals.py
-analysis/posthoc/compare_population_stats.py
-analysis/posthoc/inspect_iterations.py
-analysis/posthoc/print_logsl.py
+# Analysis scripts — keep only syn_traj_visuals and find_best_system
+analysis/posthoc/*
+!analysis/posthoc/syn_traj_visuals.py
+!analysis/posthoc/find_best_system.py
+!analysis/posthoc/__init__.py
 
 # Workspace logs
 workspace/*/logs/
 
-
+# Data
+data/aki/
 data/eb/
+data/eb2/
+
+# Ablation specs
+specs_params_abla/
+
+# AKI / EB2 problem files
+initial_conditions/aki_config.json
+initial_conditions/eb2_config.json
+specs_params/spec_params_aki.txt
+specs_params/spec_params_eb2.txt
+workspace/aki/
+workspace/eb2/

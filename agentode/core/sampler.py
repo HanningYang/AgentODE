@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-""" Class for sampling new program skeletons. """
+"""Sampling of new program skeletons."""
 from __future__ import annotations
 from abc import ABC, abstractmethod
 
@@ -37,11 +37,7 @@ from openai import OpenAI as _OpenAIClient
 DEBUG_PRINTS = os.environ.get("AGENTODE_DEBUG_PRINTS", "0") == "1"
 
 
-# ---------------------------------------------------------------------------
-# aisuite client — used for 'api' mode (direct cloud providers).
-# API keys are read automatically from env vars:
-#   OPENAI_API_KEY, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, etc.
-# ---------------------------------------------------------------------------
+# aisuite is used for direct cloud-provider API mode.
 _ai_client = ai.Client()
 
 
@@ -49,7 +45,7 @@ def _get_openwebui_client(config: config_lib.Config) -> _OpenAIClient:
     """Return an OpenAI-compatible client pointed at the OpenWebUI instance.
 
     The base URL is taken from config.openwebui_base_url (which itself
-    defaults to the OPENWEBUI_URL env var or the Uni Freiburg instance).
+    defaults to the OPENWEBUI_URL env var).
     The API key is read from the OPENWEBUI_API_KEY env var.
     """
     base_url = config.openwebui_base_url.rstrip("/")
@@ -73,17 +69,17 @@ class LLM(ABC):
         self._samples_per_prompt = samples_per_prompt
 
     def _draw_sample(self, prompt: str) -> str:
-        """ Return a predicted continuation of `prompt`."""
+        """Return a predicted continuation of `prompt`."""
         raise NotImplementedError('Must provide a language model.')
 
     @abstractmethod
     def draw_samples(self, prompt: str) -> Collection[str]:
-        """ Return multiple predicted continuations of `prompt`. """
+        """Return multiple predicted continuations of `prompt`."""
         return [self._draw_sample(prompt) for _ in range(self._samples_per_prompt)]
 
 
 class Sampler:
-    """ Node that samples program skeleton continuations and sends them for analysis. """
+    """Sample program skeleton continuations and send them for analysis."""
     _global_samples_nums: int = 1
 
     def __init__(
@@ -103,7 +99,7 @@ class Sampler:
         self.config = config
 
     def sample(self, **kwargs):
-        """ Continuously gets prompts, samples programs, sends them for analysis. """
+        """Continuously sample programs from prompts and send them for analysis."""
         while True:
             if self._max_sample_nums and self.__class__._global_samples_nums >= self._max_sample_nums:
                 break
@@ -127,14 +123,12 @@ class Sampler:
                 chosen_evaluator: evaluator.Evaluator = np.random.choice(self._evaluators)
 
                 extra_kwargs = {}
-                # Backend used for structure inference.
                 llm_source = getattr(self.config, 'structure_backend', 'local')
                 extra_kwargs['llm_source'] = llm_source
 
                 llm_model_name = None
                 if llm_source in ('api', 'openwebui'):
-                    # Prefer structure-specific model if provided; otherwise
-                    # fall back to the legacy api_model field.
+                    # Prefer the structure-specific model over the legacy fallback.
                     llm_model_name = getattr(self.config, 'structure_model', None) or getattr(
                         self.config, 'api_model', None
                     )
@@ -171,26 +165,7 @@ class Sampler:
 
 
 def _extract_body(sample: str, config: config_lib.Config) -> str:
-    """
-    Extract the function body from a response sample, removing any preceding descriptions
-    and the function signature. Preserves indentation.
-    ------------------------------------------------------------------------------------------------------------------
-    Input example:
-    ```
-    This is a description...
-    def function_name(...):
-        return ...
-    Additional comments...
-    ```
-    ------------------------------------------------------------------------------------------------------------------
-    Output example:
-    ```
-        return ...
-    Additional comments...
-    ```
-    ------------------------------------------------------------------------------------------------------------------
-    If no function definition is found, returns the original sample.
-    """
+    """Extract the function body from a model response, preserving indentation."""
     lines = sample.splitlines()
     func_body_lineno = 0
     find_def_declaration = False
@@ -202,7 +177,7 @@ def _extract_body(sample: str, config: config_lib.Config) -> str:
             break
 
     if find_def_declaration:
-        # Backend for structure inference: global llm_mode.
+        # API-style backends usually return correctly indented code blocks.
         mode = getattr(config, 'llm_mode', 'local')
         if mode in ('api', 'openwebui'):
             code = ''
@@ -213,7 +188,7 @@ def _extract_body(sample: str, config: config_lib.Config) -> str:
                     break
                 code += line + '\n'
         else:
-            # local: enforce indentation (mixtral-style)
+            # Local models sometimes omit indentation, so normalize it.
             code = ''
             indent = '    '
             for line in lines[func_body_lineno + 1:]:
@@ -244,22 +219,6 @@ class LocalLLM(LLM):
         self._batch_inference = batch_inference
         self._trim = trim
 
-    # ------------------------------------------------------------------
-    # draw_samples — routes to one of three backends via config.llm_mode
-    #
-    #   'api'       → aisuite (direct cloud API)
-    #                 config.api_model = "openai:gpt-4o"
-    #                                    "anthropic:claude-opus-4-6"
-    #                                    "deepseek:deepseek-chat"
-    #
-    #   'openwebui' → OpenWebUI API
-    #                 config.api_model       = "openai/gpt-5.2-llmlb"
-    #                 config.openwebui_base_url = "https://openwebui.uni-freiburg.de/api"
-    #                 env: OPENWEBUI_API_KEY
-    #
-    #   'local'     → local server on port 5000 (default)
-    # ------------------------------------------------------------------
-
     def draw_samples(self, prompt: str, config: config_lib.Config) -> Collection[str]:
         """Returns multiple equation program skeleton hypotheses for the given `prompt`."""
         # Backend for structure inference.
@@ -282,10 +241,6 @@ class LocalLLM(LLM):
             return self._draw_samples_openwebui(prompt, config)
         else:
             return self._draw_samples_local(prompt, config)
-
-    # ------------------------------------------------------------------
-    # Option 1: Direct cloud API via aisuite
-    # ------------------------------------------------------------------
 
     def _draw_samples_api(self, prompt: str, config: config_lib.Config) -> Collection[str]:
         full_prompt = '\n'.join([self._instruction_prompt, prompt])
@@ -330,17 +285,13 @@ class LocalLLM(LLM):
 
         return all_samples
 
-    # ------------------------------------------------------------------
-    # Option 2: OpenWebUI
-    # ------------------------------------------------------------------
-
     def _draw_samples_openwebui(self, prompt: str, config: config_lib.Config) -> Collection[str]:
         full_prompt = '\n'.join([self._instruction_prompt, prompt])
 
-        # if DEBUG_PRINTS:
-        #     print(f"=== Prompt being sent to OpenWebUI ({config.openwebui_base_url}) ===")
-        #     print(full_prompt)
-        #     print("=== End of prompt ===")
+        if DEBUG_PRINTS:
+            print(f"=== Prompt being sent to OpenWebUI ({config.openwebui_base_url}) ===")
+            print(full_prompt)
+            print("=== End of prompt ===")
 
         client = _get_openwebui_client(config)
         # Prefer structure-specific model if provided; otherwise api_model.
@@ -366,10 +317,6 @@ class LocalLLM(LLM):
             all_samples.append(body)
 
         return all_samples
-
-    # ------------------------------------------------------------------
-    # Option 3: Local LLM server on port 5000 (original, unchanged)
-    # ------------------------------------------------------------------
 
     def _draw_samples_local(self, prompt: str, config: config_lib.Config) -> Collection[str]:
         prompt = '\n'.join([self._instruction_prompt, prompt])

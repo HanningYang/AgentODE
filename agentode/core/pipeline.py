@@ -30,7 +30,7 @@ from agentode.core import sampler
 from agentode.core import profile
 from agentode.core import param_utils
 from agentode.core import checkpoint as checkpoint_lib
-from agentode.metrics import mntd_score as _mntd_score
+from agentode.metrics import mnsd_score as _mnsd_score
 
 
 def _extract_function_name(specification: str) -> str:
@@ -146,8 +146,8 @@ def main(
             t0 = time.time()
             score_value = None
             try:
-                from agentode.agent.param_agent import ParameterAgent
-                agent = ParameterAgent(
+                from agentode.agent.param_search import create_parameter_agent
+                agent = create_parameter_agent(
                     config=config,
                     problem_name=problem_name,
                     log_dir=log_dir,
@@ -161,7 +161,7 @@ def main(
                 )
                 if final_params is not None:
                     founder_param_dists = final_params
-                    dist = _mntd_score.evaluate_system_mntd(
+                    dist = _mnsd_score.evaluate_system_mnsd(
                         system_func=system_func,
                         problem_name=problem_name,
                         param_distributions=final_params,
@@ -175,7 +175,7 @@ def main(
             except Exception as e:
                 print(f"[Pipeline] ParameterAgent failed for template, falling back to default params: {e}")
                 if founder_param_dists is not None:
-                    dist = _mntd_score.evaluate_system_mntd(
+                    dist = _mnsd_score.evaluate_system_mnsd(
                         system_func=system_func,
                         problem_name=problem_name,
                         param_distributions=founder_param_dists,
@@ -189,7 +189,7 @@ def main(
             eval_time = time.time() - t0
 
             if score_value is None:
-                score_value = 0.0
+                score_value = -1e9
 
             founder_func.global_sample_nums = 0
             founder_func.sample_time = None
@@ -198,7 +198,7 @@ def main(
             founder_func.score = score_value
 
             if score_value is not None:
-                scores_per_test = {"mntd_score": score_value}
+                scores_per_test = {"mnsd_score": score_value}
                 database.register_program(
                     founder_func,
                     island_id=None,  # seed *all* islands with the template

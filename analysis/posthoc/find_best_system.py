@@ -1,7 +1,7 @@
 """Find the best system from a log directory.
 
 Usage:
-    python analysis/posthoc/find_best_system.py --log_path logs/aki_run1
+    python analysis/posthoc/find_best_system.py --log_path logs/pkpd_run1
 """
 
 import argparse
@@ -27,9 +27,11 @@ def main():
         return
 
     scored_samples = []
+    total_files = 0
 
     for file in os.listdir(log_dir):
         if file.endswith(".json"):
+            total_files += 1
             with open(os.path.join(log_dir, file), "r") as f:
                 sample = json.load(f)
                 score = sample.get("score")
@@ -49,7 +51,7 @@ def main():
     scored_samples.sort(key=lambda s: s["score"], reverse=True)
     top_k = min(10, len(scored_samples))
 
-    print(f"Found {len(scored_samples)} scored systems. Showing top {top_k}:")
+    print(f"Total systems saved: {total_files} ({len(scored_samples)} scored). Showing top {top_k}:")
     for rank, sample in enumerate(scored_samples[:top_k], start=1):
         print("=" * 80)
         print(f"Rank: {rank}")

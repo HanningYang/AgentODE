@@ -1,8 +1,7 @@
 """Observed vs synthetic trajectory comparison figures returned as PNG bytes.
 
 Auto-loads observed data from the train split when available, otherwise from
-the unsplit dataset. Returns: {"mean_trajectory", "umap" (optional),
-"faceted_by_baseline", "diff_corr_heatmap"}.
+the unsplit dataset. Returns: {"mean_trajectory", "faceted_by_baseline", "diff_corr_heatmap"}.
 """
 
 from __future__ import annotations
@@ -11,6 +10,8 @@ import io
 import os
 from typing import Dict, Iterable, List, Optional
 
+import matplotlib
+matplotlib.use("Agg")  
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -107,7 +108,10 @@ def _patient_features(df: pd.DataFrame, vars_list: Iterable[str]) -> pd.DataFram
             if len(vals) > 1:
                 # Fit slope on aligned time/value pairs.
                 n = len(vals)
-                slope = np.polyfit(t_vals[:n], vals, 1)[0]
+                try:
+                    slope = np.polyfit(t_vals[:n], vals, 1)[0]
+                except (np.linalg.LinAlgError, ValueError):
+                    slope = 0.0
             else:
                 slope = 0.0
             row[f"{v}_slope"] = float(slope)
@@ -240,11 +244,8 @@ def generate_observed_vs_synthetic_figures(
     synthetic_df: pd.DataFrame,
     vars: Optional[Iterable[str]] = None,
     bin_width: Optional[float] = None,
-    umap_n_neighbors: int = 15,
-    umap_min_dist: float = 0.1,
-    umap_metric: str = "euclidean",
 ) -> Dict[str, bytes]:
-    """Generate four comparison figures (PNG bytes) for a problem.
+    """Generate comparison figures (PNG bytes) for a problem.
 
     Args:
         problem_name: Name of the problem, used to load observed data from the
@@ -256,12 +257,10 @@ def generate_observed_vs_synthetic_figures(
             are auto-detected and intersected with the synthetic columns.
         bin_width: Time bin width for mean-trajectory and stratified plots.
             Defaults to ``Config.trajectory_bin_width`` when *None*.
-        umap_n_neighbors, umap_min_dist, umap_metric: UMAP hyperparameters.
 
     Returns:
         Dict mapping figure key -> PNG bytes:
-            "mean_trajectory", "umap" (optional), "faceted_by_baseline",
-            "diff_corr_heatmap".
+            "mean_trajectory", "faceted_by_baseline", "diff_corr_heatmap".
     """
     bin_width = _resolve_bin_width(bin_width, problem_name)
 
@@ -359,75 +358,7 @@ def generate_observed_vs_synthetic_figures(
     plt.tight_layout()
     figures["mean_trajectory"] = _fig_to_png_bytes(fig)
 
-    # 2) UMAP embedding of per-patient summary features (optional)
-    try:
-        from sklearn.preprocessing import StandardScaler  # type: ignore
-        from umap import UMAP  # type: ignore
-
-        obs_feat = _patient_features(obs, vars)
-        synth_feat = _patient_features(synth, vars)
-        feat_cols = [
-            c for c in obs_feat.columns if c != "id" and c in synth_feat.columns
-        ]
-
-        X_obs = obs_feat[feat_cols].to_numpy(dtype=float)
-        X_synth = synth_feat[feat_cols].to_numpy(dtype=float)
-        X_all = np.vstack([X_obs, X_synth])
-        n_obs = X_obs.shape[0]
-
-        X_scaled = StandardScaler().fit_transform(X_all)
-
-        emb = UMAP(
-            n_components=2,
-            random_state=42,
-            n_neighbors=umap_n_neighbors,
-            min_dist=umap_min_dist,
-            metric=umap_metric,
-        ).fit_transform(X_scaled)
-
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.scatter(
-            emb[:n_obs, 0],
-            emb[:n_obs, 1],
-            c=colors["obs"],
-            alpha=0.55,
-            s=20,
-            label="Observed",
-            edgecolors="none",
-        )
-        ax.scatter(
-            emb[n_obs:, 0],
-            emb[n_obs:, 1],
-            c=colors["synth"],
-            alpha=0.55,
-            s=20,
-            label="Synthetic",
-            edgecolors="none",
-            marker="^",
-        )
-        ax.set_xlabel("UMAP 1", fontsize=11)
-        ax.set_ylabel("UMAP 2", fontsize=11)
-        ax.set_title("UMAP embedding of patient trajectory features", fontsize=12)
-        ax.text(
-            0.5,
-            -0.1,
-            f"n_neighbors={umap_n_neighbors}  |  min_dist={umap_min_dist}"
-            f"  |  metric='{umap_metric}'",
-            transform=ax.transAxes,
-            fontsize=9,
-            color="gray",
-            ha="center",
-        )
-        ax.legend(fontsize=10, markerscale=1.4)
-        ax.grid(True, alpha=0.25)
-        ax.spines[["top", "right"]].set_visible(False)
-        plt.tight_layout(rect=[0, 0.04, 1, 1])
-        figures["umap"] = _fig_to_png_bytes(fig)
-    except Exception:
-        # If UMAP / sklearn are not available, just skip this figure.
-        pass
-
-    # 3) Mean trajectory by baseline quartile
+    # 2) Mean trajectory by baseline quartile
     q_labels = ["Q1 (low)", "Q2", "Q3", "Q4 (high)"]
     fig, axes = plt.subplots(n_vars, 4, figsize=(16, 4 * n_vars))
     if n_vars == 1:

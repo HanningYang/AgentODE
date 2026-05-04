@@ -319,10 +319,10 @@ class Evaluator:
         sample_order = getattr(new_function, 'global_sample_nums', None)
 
         # Centralized evaluation: parameter optimization via ParameterAgent,
-        # followed by MNTD scoring in summary-stat space.
+        # followed by MNSD scoring in summary-stat space.
         try:
-            from agentode.agent.param_agent import ParameterAgent
-            from agentode.metrics import mntd_score as _mntd_score
+            from agentode.agent.param_search import create_parameter_agent
+            from agentode.metrics import mnsd_score as _mnsd_score
 
             problem_name = kwargs.get('problem_name') or self._problem_name
             if problem_name is None:
@@ -332,21 +332,21 @@ class Evaluator:
 
             config_obj = kwargs.get('config', None)
 
-            best_island_mntd_score: float | None = None
+            best_island_mnsd_score: float | None = None
             if (
                 enable_param_optim
                 and isinstance(self._database, buffer.ExperienceBuffer)
                 and island_id is not None
             ):
                 try:
-                    best_island_mntd_score = self._database.get_best_island_score(
+                    best_island_mnsd_score = self._database.get_best_island_score(
                         island_id,
-                        test_name='mntd_score',
+                        test_name='mnsd_score',
                     )
                 except Exception:
-                    best_island_mntd_score = None
+                    best_island_mnsd_score = None
 
-            agent = ParameterAgent(
+            agent = create_parameter_agent(
                 config=config_obj,
                 problem_name=problem_name,
                 log_dir=self._log_dir,
@@ -356,14 +356,14 @@ class Evaluator:
                 program_str=program,
                 initial_params=param_distributions if enable_param_optim else None,
                 sample_order=sample_order,
-                best_island_score=best_island_mntd_score if enable_param_optim else None,
+                best_island_score=best_island_mnsd_score if enable_param_optim else None,
             )
 
             param_distributions = final_params
             kwargs['param_distributions'] = final_params
             new_function.param_distributions = final_params
 
-            # Only assign an MNTD score to this structure when parameter
+            # Only assign an MNSD score to this structure when parameter
             # inference produced at least one valid, finite logSL. If
             # logSL was None (or non-finite) throughout optimisation,
             # the structure is treated as violating constraints and left
@@ -374,7 +374,7 @@ class Evaluator:
                 and np.isfinite(final_score)
             ):
                 try:
-                    # Re-compile to get system_func for MNTD scoring.
+                    # Re-compile to get system_func for MNSD scoring.
                     _ns: dict[str, Any] = {}
                     exec(program, _ns)
                     system_func = _ns[self._function_to_evolve]
@@ -382,7 +382,7 @@ class Evaluator:
                         str(code_manipulation.text_to_program(program)
                             .get_function(self._function_to_evolve))
                     )
-                    dist = _mntd_score.evaluate_system_mntd(
+                    dist = _mnsd_score.evaluate_system_mnsd(
                         system_func=system_func,
                         problem_name=problem_name,
                         param_distributions=final_params,
@@ -392,10 +392,10 @@ class Evaluator:
                         standardization=True,
                     )
                     if dist is not None and np.isfinite(dist):
-                        # Lower MNTD is better; we store negative as a score.
-                        scores_per_test['mntd_score'] = -round(float(dist), 2)
+                        # Lower MNSD is better; we store negative as a score.
+                        scores_per_test['mnsd_score'] = -round(float(dist), 2)
                 except Exception as e:
-                    print(f"[Centralized evaluation] Failed to compute MNTD distance: {e}")
+                    print(f"[Centralized evaluation] Failed to compute MNSD distance: {e}")
         except Exception as e:
             prefix = f"Sample {sample_order}: " if sample_order is not None else ""
             print(f"{prefix}[Centralized evaluation] Failed with error: {e}")

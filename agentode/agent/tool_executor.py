@@ -12,11 +12,6 @@ import numpy as np
 from agentode.ode import initial_condition_utils
 from . import ts_features as tsf
 
-
-# ---------------------------------------------------------------------------
-# Tool registry and execution over trajectory arrays
-# ---------------------------------------------------------------------------
-
 TOOL_REGISTRY: Dict[str, Any] = {
     "mean":               tsf.mean,
     "std":                tsf.std,
@@ -47,7 +42,7 @@ TOOL_REGISTRY: Dict[str, Any] = {
     "ccf_lag1":           tsf.ccf_lag1,
 }
 
-# Decimal places to use when formatting each statistic in the comparison table.
+# Table formatting precision by statistic.
 _DECIMALS: Dict[str, int] = {
     "mean":               3,
     "std":                3,
@@ -107,9 +102,7 @@ def format_stat_table(
     Returns:
         A formatted multiline string suitable for inserting into `{stat_table}`.
     """
-    # Index ts_stats.json by (statistic, variable) — normalise variable to
-    # lowercase so lookups are case-insensitive (ts_stats may use 'Gp'/'A'
-    # while the LLM returns 'gp'/'a').
+    # Normalize variable names so lookups stay case-insensitive.
     ts_stats = _load_ts_stats(problem_name)
     index: Dict[tuple[str, str], float | None] = {}
     for row in ts_stats:
@@ -118,21 +111,19 @@ def format_stat_table(
         index[(stat, var)] = row.get("value")
 
     def _lookup_observed(tool_name: str, entry: Dict[str, Any]) -> float | None:
-        # Map tool name directly to ts_stats "statistic" field.
         stat_key = tool_name
 
         if tool_name in ("diff_corr", "level_corr", "ccf_lag1"):
             var_x = str(entry.get("variable_x"))
             var_y = str(entry.get("variable_y"))
-            # ts_stats uses "var1__var2" ordering.
+            # ts_stats stores paired variables as "var1__var2".
             pair_key = f"{var_x.lower()}__{var_y.lower()}"
             return index.get((stat_key, pair_key))
 
         var = str(entry.get("variable"))
         return index.get((stat_key, var.lower()))
 
-    # Deduplicate tool results: if the same (tool, variable) was called across
-    # multiple diagnosis turns, keep only the last occurrence (most recent).
+    # Keep only the most recent result for repeated tool calls.
     seen: Dict[tuple[str, str], int] = {}
     for i, res in enumerate(tool_results):
         tool_name = str(res.get("tool"))
@@ -143,7 +134,6 @@ def format_stat_table(
         seen[key] = i
     deduped = [tool_results[i] for i in sorted(seen.values())]
 
-    # Build rows: stat, variable label, observed, synthetic.
     rows: List[tuple[str, str, float | None, float | None]] = []
     for res in deduped:
         tool_name = str(res.get("tool"))
@@ -158,16 +148,19 @@ def format_stat_table(
         syn_val = res.get("synthetic")
         rows.append((tool_name, label, obs_val, syn_val))
 
-    # Determine column widths.
     stat_col = "stat"
     var_col = "variable"
     obs_col = "observed"
     syn_col = "synthetic"
+    gap_col = "gap"
+    rel_gap_col = "rel_gap"
 
     stat_width = max(len(stat_col), *(len(r[0]) for r in rows)) if rows else len(stat_col)
     var_width = max(len(var_col), *(len(r[1]) for r in rows)) if rows else len(var_col)
     obs_width = len(obs_col)
     syn_width = len(syn_col)
+    gap_width = max(len(gap_col), 8)
+    rel_gap_width = max(len(rel_gap_col), 8)
 
     def _fmt_val(v: float | None, decimals: int = 4) -> str:
         if v is None:
@@ -177,11 +170,34 @@ def format_stat_table(
         except (TypeError, ValueError):
             return "NA"
 
+    def _fmt_gap(obs: float | None, syn: float | None) -> str:
+        if obs is None or syn is None:
+            return "NA"
+        try:
+            gap = float(syn) - float(obs)
+            return f"{gap:+.4f}"
+        except (TypeError, ValueError):
+            return "NA"
+
+    def _fmt_rel_gap(obs: float | None, syn: float | None) -> str:
+        if obs is None or syn is None:
+            return "NA"
+        try:
+            o, s = float(obs), float(syn)
+            denom = abs(o)
+            if denom < 1e-12:
+                return "NA"
+            return f"{(s - o) / denom * 100:+.1f}%"
+        except (TypeError, ValueError):
+            return "NA"
+
     header = (
         f"{stat_col:<{stat_width}}  "
         f"{var_col:<{var_width}}  "
         f"{obs_col:>{obs_width}}  "
-        f"{syn_col:>{syn_width}}"
+        f"{syn_col:>{syn_width}}  "
+        f"{gap_col:>{gap_width}}  "
+        f"{rel_gap_col:>{rel_gap_width}}"
     )
     sep = "-" * len(header)
 
@@ -190,11 +206,15 @@ def format_stat_table(
         decimals = _DECIMALS.get(stat, 4)
         obs_str = _fmt_val(obs_val, decimals)
         syn_str = _fmt_val(syn_val, decimals)
+        gap_str = _fmt_gap(obs_val, syn_val)
+        rel_gap_str = _fmt_rel_gap(obs_val, syn_val)
         lines.append(
             f"{stat:<{stat_width}}  "
             f"{var:<{var_width}}  "
             f"{obs_str:>{obs_width}}  "
-            f"{syn_str:>{syn_width}}"
+            f"{syn_str:>{syn_width}}  "
+            f"{gap_str:>{gap_width}}  "
+            f"{rel_gap_str:>{rel_gap_width}}"
         )
 
     return "\n".join(lines)
@@ -239,8 +259,8 @@ def execute_tool_calls(
     """
     biomarker_order = initial_condition_utils.get_biomarker_order(config)
 
-    # Aggregate across patients for per-variable feature extraction.
-    obs_mean = observed.mean(axis=0)   # shape (T, n_variables)
+    # Compute features on the cohort mean trajectory for each variable.
+    obs_mean = observed.mean(axis=0)
     syn_mean = synthetic.mean(axis=0)
 
     results: List[Dict[str, Any]] = []

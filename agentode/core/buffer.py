@@ -281,10 +281,6 @@ class Island:
         signatures = list(self._clusters.keys())
 
         if not signatures:
-            # No successful programs yet; fall back to the seed program from
-            # the template without emitting warnings. In normal runs this
-            # path should be unused because the pipeline seeds all islands
-            # with a Euclidean-scored founder system.
             seed_func = self._template.get_function(self._function_to_evolve)
             return (str(seed_func), 1)
 
