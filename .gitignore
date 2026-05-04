@@ -37,6 +37,7 @@ initial_conditions/aki_config.json
 initial_conditions/eb2_config.json
 specs_params/spec_params_aki.txt
 specs_skeleton/specification_aki_numpy.txt
+specs_skeleton/specification_aki_torch.txt
 specs_params/spec_params_eb2.txt
 specs_skeleton/specification_eb2_numpy.txt
 workspace/aki/
