@@ -1,0 +1,81 @@
+"""
+Find the symbolic skeleton of an ODE system that represents
+inflammatory biomarker dynamics in patients with Severe
+Recessive Dystrophic Epidermolysis Bullosa (RDEB), a rare genetic
+blistering skin disorder characterised by chronic wounds,
+systemic inflammation, anaemia, and nutritional compromise.
+
+The system involves four coupled state variables measured
+longitudinally over time in paediatric RDEB patients:
+
+    - albumin   (g/dL):  Serum albumin, a marker of nutritional
+                         status and chronic inflammation.
+    - log_crp   (a.u.):  Log10-transformed C-reactive protein,
+                         i.e. log10(CRP + 1), where CRP is in mg/L.
+                         A marker of systemic inflammatory burden.
+    - hemoglobin (g/dL): Haemoglobin, a marker of anaemia severity.
+    - bmi_rel   (a.u.):  BMI relative to age- and sex-matched WHO
+                         healthy reference. A value of 0 indicates
+                         a healthy BMI; negative values indicate
+                         underweight relative to peers.
+
+The time unit is months since first hospital visit (follow-up
+records). Observations span t in [0, 144.0] (up to 12 years
+of follow-up).
+
+
+HARD CONSTRAINT:
+- The parameter array has at most MAX_NPARAMS = 12 slots.
+- Do NOT skip indices.
+- Use only as many parameters as necessary; avoid introducing
+  redundant parameters.
+- You must not use any params[k] with k >= MAX_NPARAMS.
+- Do NOT hardcode or predefine numeric values for parameters.
+  All numeric constants that govern the dynamics must be
+  represented as params[k] entries. The parameter values
+  will be optimised against data — do not assume or fix them.
+"""
+
+
+import numpy as np
+
+# Initialize parameters
+MAX_NPARAMS = 12
+params = [1.0] * MAX_NPARAMS
+
+
+@system.evolve
+def system(biomarkers: np.ndarray, params: np.ndarray) -> np.ndarray:
+    """Symbolic skeleton for a 4-variable ODE system.
+
+    Args:
+        biomarkers: A numpy array containing
+                    [albumin, log_crp, hemoglobin, bmi_rel].
+        params: Array of numeric constants or parameters to be optimized.
+                You must not use any params[k] with k >= MAX_NPARAMS.
+    Returns:
+        A numpy array representing the temporal derivatives (d/dt)
+        of the state variables [d_albumin/dt, d_log_crp/dt,
+        d_hemoglobin/dt, d_bmi_rel/dt].
+    """
+    albumin    = biomarkers[0]
+    log_crp    = biomarkers[1]
+    hemoglobin = biomarkers[2]
+    bmi_rel    = biomarkers[3]
+
+    # ---- albumin dynamics ----
+    d_albumin = params[0] * albumin
+
+    # ---- log_crp dynamics ----
+    d_log_crp = params[1] * log_crp
+
+    # ---- hemoglobin dynamics ----
+    d_hemoglobin = params[2] * hemoglobin
+
+    # ---- bmi_rel dynamics ----
+    d_bmi_rel = params[3] * bmi_rel
+
+    d_biomarkers = np.array([
+        d_albumin, d_log_crp, d_hemoglobin, d_bmi_rel
+    ], dtype=float)
+    return d_biomarkers
